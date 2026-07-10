@@ -15,6 +15,25 @@ __kernel void precompute_trig(
     }
 }
 
+// Manual bilinear interpolation over a flat row-major buffer, used by the
+// opencl-buffer kernel variant below. Mirrors the Image2D+CLK_FILTER_LINEAR
+// sampler's semantics (clamp-to-zero outside [0, W-1) x [0, H-1)) so that
+// the buffer and image kernels agree with each other bit-for-bit-ish.
+inline float bilinear_buffer(__global const float* sino, int W, int H, float x, float y) {
+    if (x < 0.0f || x >= (float)(W - 1) || y < 0.0f || y >= (float)(H - 1))
+        return 0.0f;
+    int ix = (int)x;
+    int iy = (int)y;
+    float dx = x - ix;
+    float dy = y - iy;
+    float v00 = sino[iy       * W + ix];
+    float v10 = sino[iy       * W + ix + 1];
+    float v01 = sino[(iy + 1) * W + ix];
+    float v11 = sino[(iy + 1) * W + ix + 1];
+    return (1.0f - dx) * ((1.0f - dy) * v00 + dy * v01)
+         +         dx  * ((1.0f - dy) * v10 + dy * v11);
+}
+
 // Kernel 2: forward search MSE.
 // ND-range: global=(P, WG_SIZE), local=(1, WG_SIZE).
 // One work group per (xshift, alpha, beta) combo.
@@ -109,6 +128,107 @@ __kernel void forward_search_mse(
     }
 
     // Parallel tree reduction in local memory
+    partial[local_id] = partial_sum;
+    barrier(CLK_LOCAL_MEM_FENCE);
+
+    for (int stride = wg_size >> 1; stride > 0; stride >>= 1) {
+        if (local_id < stride)
+            partial[local_id] += partial[local_id + stride];
+        barrier(CLK_LOCAL_MEM_FENCE);
+    }
+
+    if (local_id == 0) {
+        mse_out[combo_id] = partial[0] / (float)N;
+        x0_out[combo_id]  = x_0;
+        y0_out[combo_id]  = y_0;
+    }
+}
+
+// opencl-buffer variant of forward_search_mse: identical math, but the
+// sinogram is a plain __global buffer with manual bilinear interpolation
+// (bilinear_buffer above) instead of an Image2D + hardware sampler. Kept as
+// a separate kernel (rather than an #ifdef) so both data-format versions can
+// be built and benchmarked from the same program in one run.
+__kernel void forward_search_mse_buffer(
+    __global const float*   sinogram,
+    __global const float*   xshift_arr,
+    __global const float*   sin_alpha,
+    __global const float*   cos_alpha,
+    __global const float*   sin_beta,
+    __global const float*   cos_beta,
+    __global const float*   nearest_theta,
+    __global       float*   mse_out,
+    __global       float*   x0_out,
+    __global       float*   y0_out,
+    int na, int nb, int N,
+    float SDD, float SOD, float pixel_size,
+    int detector_width, int detector_height,
+    __local float* partial
+) {
+    int combo_id = get_global_id(0);
+    int local_id = get_local_id(1);
+    int wg_size  = get_local_size(1);
+
+    int i_xshift = combo_id / (na * nb);
+    int i_alpha  = (combo_id % (na * nb)) / nb;
+    int i_beta   =  combo_id % nb;
+
+    float xshift = xshift_arr[i_xshift];
+    float sin_a  = sin_alpha[i_alpha];
+    float cos_a  = cos_alpha[i_alpha];
+    float sin_b  = sin_beta[i_beta];
+    float cos_b  = cos_beta[i_beta];
+
+    float b0    = SDD * cos_a * sin_b;
+    float b1    = SDD * cos_a * xshift * cos_b;
+    float det_A = -sin_a * (-xshift * cos_a * sin_b + SOD * sin_a)
+                  - cos_a * cos_b * SOD * cos_a * cos_b;
+
+    float x_0 = 0.0f, y_0 = 0.0f;
+    if (det_A != 0.0f) {
+        float inv00 = (-xshift * cos_a * sin_b + SOD * sin_a);
+        float inv01 = -cos_a * cos_b;
+        float inv10 = -SOD * cos_a * cos_b;
+        float inv11 = -sin_a;
+        x_0 = (inv00 * b0 + inv01 * b1) / det_A;
+        y_0 = (inv10 * b0 + inv11 * b1) / det_A;
+    }
+
+    float x_p    = cos_a * x_0 + sin_a * cos_b * y_0 - sin_a * sin_b * SDD;
+    float z_p    = -sin_b * y_0 - cos_b * SDD;
+    float theta_0 = atan(x_p / z_p);
+
+    float hw = (detector_width  - 1) * 0.5f;
+    float hh = (detector_height - 1) * 0.5f;
+
+    float partial_sum = 0.0f;
+    for (int i = local_id; i < N; i += wg_size) {
+        float nt     = nearest_theta[i];
+        float theta  =  nt + theta_0;
+        float rtheta = -nt + theta_0;
+
+        float tan_t  = native_tan(theta);
+        float tan_rt = native_tan(rtheta);
+
+        float denom  = tan_t  * sin_a * sin_b + cos_b;
+        float rdenom = tan_rt * sin_a * sin_b + cos_b;
+        float temp   = (denom  != 0.0f) ? SDD / denom  : 0.0f;
+        float rtemp  = (rdenom != 0.0f) ? SDD / rdenom : 0.0f;
+
+        // No +0.5 offset here: bilinear_buffer indexes the array directly at
+        // pixel-index coordinates, matching the Python reference's indexing.
+        float px  = (-(temp  * tan_t  * cos_a)) / pixel_size + hw;
+        float py  =  hh - (temp  * (-tan_t  * sin_a * cos_b + sin_b)) / pixel_size;
+        float prx = (-(rtemp * tan_rt * cos_a)) / pixel_size + hw;
+        float pry =  hh - (rtemp * (-tan_rt * sin_a * cos_b + sin_b)) / pixel_size;
+
+        float f_t  = bilinear_buffer(sinogram, detector_width, detector_height, px,  py);
+        float f_rt = bilinear_buffer(sinogram, detector_width, detector_height, prx, pry);
+
+        float diff = f_t - f_rt;
+        partial_sum += diff * diff;
+    }
+
     partial[local_id] = partial_sum;
     barrier(CLK_LOCAL_MEM_FENCE);
 

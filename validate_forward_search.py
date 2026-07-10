@@ -4,10 +4,10 @@ Compare GPU forward search output against the Python reference.
 
 Usage:
     # Run Python reference first, then GPU binary, then:
-    python3 validate_forward_search.py --gpu real_cb_pose.json --ref ref_cb_pose.json
+    python3 validate_forward_search.py --gpu real_cb_pose.h5 --ref ref_cb_pose.json
 
     # Or run the Python reference automatically:
-    python3 validate_forward_search.py --gpu real_cb_pose.json --run-ref \
+    python3 validate_forward_search.py --gpu real_cb_pose.h5 --run-ref \
         --data /lgrp/edu-2026-1-gpulab/projs_change.hdf5
 """
 
@@ -18,8 +18,19 @@ import subprocess
 import sys
 import time
 
+import h5py
+
 
 def load(path):
+    if path.endswith(".h5") or path.endswith(".hdf5"):
+        with h5py.File(path, "r") as f:
+            return {
+                "xshift": f["xshift"][()],
+                "alpha": f["alpha"][()],
+                "beta": f["beta"][()],
+                "MSE": f["MSE"][()],
+                "center_point": list(f["center_point"][()]),
+            }
     with open(path) as f:
         return json.load(f)
 
@@ -118,7 +129,7 @@ def compare(gpu, ref):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--gpu",  default="real_cb_pose.json",  help="GPU output JSON")
+    ap.add_argument("--gpu",  default="real_cb_pose.h5",  help="GPU output HDF5")
     ap.add_argument("--ref",  default="ref_cb_pose.json",   help="Reference JSON")
     ap.add_argument("--run-ref", action="store_true",        help="Run Python reference first")
     ap.add_argument("--data", default="/lgrp/edu-2026-1-gpulab/projs_change.hdf5")

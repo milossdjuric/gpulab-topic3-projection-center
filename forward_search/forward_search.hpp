@@ -23,4 +23,5 @@ struct CbPose {
 CbPose computeCOR(const CbPara& para,
                   const std::vector<float>& projs,
                   const SearchArgs& args,
-                  const std::string& kernel_path);
+                  const std::string& kernel_path,
+                  const std::string& mode = "image");

@@ -9,6 +9,9 @@
 #include <iostream>
 #include <vector>
 
+// Matches the Python reference: sum all projections into one sinogram, then
+// normalize to [0,1] so the MSE metric is scale-invariant across datasets.
+// One-time CPU cost, not a bottleneck vs. the 35k-combo search below.
 static std::vector<float> buildSinogram(const std::vector<float>& projs,
                                         int num_projs, int H, int W) {
     std::vector<float> sino(H * W, 0.0f);
@@ -31,7 +34,11 @@ static std::vector<float> makeRange(double lo, double hi, double step) {
 CbPose computeCOR(const CbPara& para,
                   const std::vector<float>& projs,
                   const SearchArgs& args,
-                  const std::string& kernel_path) {
+                  const std::string& kernel_path,
+                  const std::string& mode) {
+    bool use_buffer = (mode == "buffer");
+    if (!use_buffer && mode != "image")
+        throw std::runtime_error("Unknown --mode '" + mode + "' (expected image|buffer)");
 
     // --- OpenCL setup ---
     cl::Device dev = pickGPU();
@@ -39,16 +46,25 @@ CbPose computeCOR(const CbPara& para,
     cl::Context ctx({dev});
     cl::CommandQueue queue(ctx, dev);
 
-    // --- Sinogram as Image2D ---
+    // --- Sinogram: Image2D (hardware sampler) or plain Buffer (manual bilinear) ---
     int H = para.detector_height, W = para.detector_width;
     std::vector<float> sino = buildSinogram(projs, para.num_projs, H, W);
 
-    cl::ImageFormat fmt(CL_R, CL_FLOAT);
-    cl::Image2D sino_img(ctx,
-                         CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
-                         fmt, W, H, 0,
-                         const_cast<float*>(sino.data()));
-    std::cerr << "Sinogram: " << W << "x" << H << " Image2D uploaded\n";
+    cl::Image2D sino_img;
+    cl::Buffer  sino_buf;
+    if (use_buffer) {
+        sino_buf = cl::Buffer(ctx, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
+                              W * H * sizeof(float),
+                              const_cast<float*>(sino.data()));
+        std::cerr << "Sinogram: " << W << "x" << H << " Buffer uploaded\n";
+    } else {
+        cl::ImageFormat fmt(CL_R, CL_FLOAT);
+        sino_img = cl::Image2D(ctx,
+                               CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
+                               fmt, W, H, 0,
+                               const_cast<float*>(sino.data()));
+        std::cerr << "Sinogram: " << W << "x" << H << " Image2D uploaded\n";
+    }
 
     // --- Parameter grid ---
     const int    N_THETA   = 1000;
@@ -108,13 +124,17 @@ CbPose computeCOR(const CbPara& para,
     std::cerr << "Trig precomputation done\n";
 
     // --- Kernel 2: forward search MSE ---
-    cl::Kernel k_search(prog, "forward_search_mse");
+    cl::Kernel k_search(prog, use_buffer ? "forward_search_mse_buffer" : "forward_search_mse");
 
+    // Query hardware-preferred multiple for alignment, but floor it at 64 —
+    // with only 1000 theta steps per combo, a smaller WG under-occupies the
+    // reduction tree and adds barrier overhead relative to useful work.
     size_t wg_mult = k_search.getWorkGroupInfo<CL_KERNEL_PREFERRED_WORK_GROUP_SIZE_MULTIPLE>(dev);
     size_t WG_SIZE = (wg_mult >= 64) ? wg_mult : 64;
     std::cerr << "WG_SIZE: " << WG_SIZE << "\n";
 
-    k_search.setArg(0,  sino_img);
+    if (use_buffer) k_search.setArg(0, sino_buf);
+    else            k_search.setArg(0, sino_img);
     k_search.setArg(1,  buf_xshift);
     k_search.setArg(2,  buf_sin_alpha);
     k_search.setArg(3,  buf_cos_alpha);
@@ -148,6 +168,8 @@ CbPose computeCOR(const CbPara& para,
     queue.enqueueReadBuffer(buf_y0,  CL_TRUE, 0, P * sizeof(float), h_y0.data());
 
     // --- Find best combo ---
+    // combo_id was encoded row-major as (i_xshift * na + i_alpha) * nb + i_beta
+    // in the kernel's ND-range decode; invert that here to recover indices.
     int best     = (int)(std::min_element(h_mse.begin(), h_mse.end()) - h_mse.begin());
     int i_xshift = best / (na * nb);
     int i_alpha  = (best % (na * nb)) / nb;

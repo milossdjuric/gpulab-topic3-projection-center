@@ -1,6 +1,4 @@
 #include <iostream>
-#include <fstream>
-#include <iomanip>
 #include <stdexcept>
 #include <vector>
 #include <cmath>
@@ -18,6 +16,8 @@ static CbPara loadHDF5(const std::string& path, std::vector<float>& projs) {
         file.openDataSet(name).read(&v, H5::PredType::NATIVE_DOUBLE);
         return v;
     };
+    // Source HDF5 stores scalar ints (num_projs, detector_width, ...) as
+    // float64 too, matching how the Python reference's h5py writer saved them.
     auto readInt = [&](const std::string& name) {
         double v;
         file.openDataSet(name).read(&v, H5::PredType::NATIVE_DOUBLE);
@@ -50,17 +50,24 @@ static CbPara loadHDF5(const std::string& path, std::vector<float>& projs) {
     return p;
 }
 
-static void writeJson(const std::string& path, const CbPose& pose) {
-    std::ofstream f(path);
-    if (!f) throw std::runtime_error("Cannot write: " + path);
-    f << std::fixed << std::setprecision(15);
-    f << "{\n";
-    f << "  \"center_point\": [" << pose.center_x << ", " << pose.center_y << "],\n";
-    f << "  \"xshift\": " << pose.xshift << ",\n";
-    f << "  \"alpha\": "  << pose.alpha  << ",\n";
-    f << "  \"beta\": "   << pose.beta   << ",\n";
-    f << "  \"MSE\": "    << pose.mse    << "\n";
-    f << "}\n";
+static void writeScalar(H5::H5File& file, const std::string& name, double v) {
+    H5::DataSpace space(H5S_SCALAR);
+    file.createDataSet(name, H5::PredType::NATIVE_DOUBLE, space).write(&v, H5::PredType::NATIVE_DOUBLE);
+}
+
+static void writeHDF5(const std::string& path, const CbPose& pose) {
+    H5::H5File file(path, H5F_ACC_TRUNC);
+
+    writeScalar(file, "xshift", pose.xshift);
+    writeScalar(file, "alpha",  pose.alpha);
+    writeScalar(file, "beta",   pose.beta);
+    writeScalar(file, "MSE",    pose.mse);
+
+    double center[2] = {pose.center_x, pose.center_y};
+    hsize_t dim[1] = {2};
+    H5::DataSpace space(1, dim);
+    file.createDataSet("center_point", H5::PredType::NATIVE_DOUBLE, space)
+        .write(center, H5::PredType::NATIVE_DOUBLE);
 }
 
 int main(int argc, char* argv[]) {
@@ -76,8 +83,10 @@ int main(int argc, char* argv[]) {
         ("beta-step",   po::value<double>()->default_value(1.0),  "Step of beta (deg)")
         ("kernel",      po::value<std::string>()->default_value(
                             "kernels/forward_search.cl"), "Kernel file path")
+        ("mode",        po::value<std::string>()->default_value("image"),
+                            "Sinogram data format: image (Image2D+sampler) or buffer (manual bilinear)")
         ("output",      po::value<std::string>()->default_value(
-                            "real_cb_pose.json"), "Output JSON path");
+                            "real_cb_pose.h5"), "Output HDF5 path");
 
     po::variables_map vm;
     po::store(po::parse_command_line(argc, argv, desc), vm);
@@ -97,9 +106,11 @@ int main(int argc, char* argv[]) {
         args.alpha_step  = vm["alpha-step"].as<double>()  / 180.0 * M_PI;
         args.beta_step   = vm["beta-step"].as<double>()   / 180.0 * M_PI;
 
-        CbPose pose = computeCOR(para, projs, args, vm["kernel"].as<std::string>());
+        CbPose pose = computeCOR(para, projs, args,
+                                 vm["kernel"].as<std::string>(),
+                                 vm["mode"].as<std::string>());
 
-        writeJson(vm["output"].as<std::string>(), pose);
+        writeHDF5(vm["output"].as<std::string>(), pose);
         std::cerr << "MSE:    " << pose.mse << "\n";
         std::cerr << "xshift: " << pose.xshift * 1000.0 << " mm\n";
         std::cerr << "alpha:  " << pose.alpha / M_PI * 180.0 << " deg\n";
