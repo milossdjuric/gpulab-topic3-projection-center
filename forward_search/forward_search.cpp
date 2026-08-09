@@ -14,13 +14,18 @@
 // One-time CPU cost, not a bottleneck vs. the 35k-combo search below.
 static std::vector<float> buildSinogram(const std::vector<float>& projs,
                                         int num_projs, int H, int W) {
-    std::vector<float> sino(H * W, 0.0f);
+    // Accumulate in double: naive float32 summation over 180 projections
+    // drifts enough from numpy's pairwise-summed .sum(axis=0) to tip the
+    // argmin in flat regions of the MSE search landscape.
+    std::vector<double> sino_d(H * W, 0.0);
     for (int p = 0; p < num_projs; ++p)
         for (int i = 0; i < H * W; ++i)
-            sino[i] += projs[p * H * W + i];
-    float mn = *std::min_element(sino.begin(), sino.end());
-    float mx = *std::max_element(sino.begin(), sino.end());
-    for (auto& v : sino) v = (v - mn) / (mx - mn);
+            sino_d[i] += projs[p * H * W + i];
+    double mn = *std::min_element(sino_d.begin(), sino_d.end());
+    double mx = *std::max_element(sino_d.begin(), sino_d.end());
+    std::vector<float> sino(H * W);
+    for (int i = 0; i < H * W; ++i)
+        sino[i] = static_cast<float>((sino_d[i] - mn) / (mx - mn));
     return sino;
 }
 

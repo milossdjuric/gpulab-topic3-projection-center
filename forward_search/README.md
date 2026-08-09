@@ -53,7 +53,11 @@ meson compile -C builddir # or: ninja -C builddir
 | `--beta-step` | `1.0` | Grid step for beta, degrees |
 | `--kernel` | `kernels/forward_search.cl` | Path to the OpenCL kernel source |
 | `--mode` | `image` | Sinogram data format: `image` (Image2D+sampler) or `buffer` (manual bilinear) |
-| `--output` | `real_cb_pose.h5` | Output HDF5 path |
+| `--output` | `runs/real_cb_pose.h5` | Output HDF5 path |
+
+Run outputs, logs, and local dataset copies aren't meant to be committed —
+`--output` defaults into `runs/` (created automatically if missing), which is
+gitignored, same as `data/` for local `.hdf5` input copies.
 
 Note: the CLI defaults to `--mode image`, while the Python interface below defaults
 to `mode="buffer"` — deliberately different, because `image` mode crashes on this
@@ -76,13 +80,27 @@ meters for xshift — same units as internal computation), plus
 ## Validating against the Python reference
 
 ```bash
-python3 ../validate_forward_search.py --gpu real_cb_pose.h5 --run-ref \
+python3 ../validate_forward_search.py --gpu runs/real_cb_pose.h5 --run-ref \
     --data /path/to/projs_change.hdf5
 ```
 
 This runs the Python reference, compares its JSON output against the GPU's
 HDF5 output (MSE within 1% tolerance, pose parameters within tight absolute
-tolerance), and prints a pass/fail table.
+tolerance, or within one grid step — see caveat below), and prints a
+pass/fail table.
+
+**Known reference bug (not a GPU defect):** `get_linear_interpolate_MSE` in
+`Topic_3_forwardsearching.py` declares `f_theta`/`f_rtheta` outside the
+per-ray bounds check and never resets them to 0, so whenever a ray falls
+outside the detector it silently reuses the *previous* ray's interpolated
+value instead of contributing 0. On `projs_change.hdf5` this hits ~47% of
+rays at some grid points, which biases the reference's MSE and can shift its
+argmin by one grid step in flat regions of the search landscape (confirmed:
+patching the reference to zero-init those variables reproduces the GPU's MSE
+to 5 significant figures). The GPU kernel already implements the correct
+zero-on-out-of-bounds behavior (`bilinear_buffer` in the `.cl` file), so
+`validate_forward_search.py` treats an adjacent-bin match as a pass with a
+note rather than a hard failure.
 
 ## Architecture
 

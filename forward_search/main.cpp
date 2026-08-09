@@ -2,6 +2,7 @@
 #include <stdexcept>
 #include <vector>
 #include <cmath>
+#include <filesystem>
 #include <H5Cpp.h>
 #include <boost/program_options.hpp>
 #include "forward_search.hpp"
@@ -56,6 +57,10 @@ static void writeScalar(H5::H5File& file, const std::string& name, double v) {
 }
 
 static void writeHDF5(const std::string& path, const CbPose& pose) {
+    std::filesystem::path fpath(path);
+    if (fpath.has_parent_path())
+        std::filesystem::create_directories(fpath.parent_path());
+
     H5::H5File file(path, H5F_ACC_TRUNC);
 
     writeScalar(file, "xshift", pose.xshift);
@@ -86,7 +91,7 @@ int main(int argc, char* argv[]) {
         ("mode",        po::value<std::string>()->default_value("image"),
                             "Sinogram data format: image (Image2D+sampler) or buffer (manual bilinear)")
         ("output",      po::value<std::string>()->default_value(
-                            "real_cb_pose.h5"), "Output HDF5 path");
+                            "runs/real_cb_pose.h5"), "Output HDF5 path");
 
     po::variables_map vm;
     po::store(po::parse_command_line(argc, argv, desc), vm);

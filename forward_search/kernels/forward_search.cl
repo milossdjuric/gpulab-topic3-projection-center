@@ -6,12 +6,12 @@ __kernel void precompute_trig(
 ) {
     int id = get_global_id(0);
     if (id < na) {
-        sin_alpha[id] = native_sin(alpha_arr[id]);
-        cos_alpha[id] = native_cos(alpha_arr[id]);
+        sin_alpha[id] = sin(alpha_arr[id]);
+        cos_alpha[id] = cos(alpha_arr[id]);
     }
     if (id < nb) {
-        sin_beta[id] = native_sin(beta_arr[id]);
-        cos_beta[id] = native_cos(beta_arr[id]);
+        sin_beta[id] = sin(beta_arr[id]);
+        cos_beta[id] = cos(beta_arr[id]);
     }
 }
 
@@ -106,8 +106,8 @@ __kernel void forward_search_mse(
         float theta  =  nt + theta_0;
         float rtheta = -nt + theta_0;
 
-        float tan_t  = native_tan(theta);
-        float tan_rt = native_tan(rtheta);
+        float tan_t  = tan(theta);
+        float tan_rt = tan(rtheta);
 
         float denom  = tan_t  * sin_a * sin_b + cos_b;
         float rdenom = tan_rt * sin_a * sin_b + cos_b;
@@ -207,8 +207,8 @@ __kernel void forward_search_mse_buffer(
         float theta  =  nt + theta_0;
         float rtheta = -nt + theta_0;
 
-        float tan_t  = native_tan(theta);
-        float tan_rt = native_tan(rtheta);
+        float tan_t  = tan(theta);
+        float tan_rt = tan(rtheta);
 
         float denom  = tan_t  * sin_a * sin_b + cos_b;
         float rdenom = tan_rt * sin_a * sin_b + cos_b;
