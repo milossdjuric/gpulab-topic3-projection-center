@@ -5,13 +5,36 @@
 #include "forward_search.hpp"
 #include "opencl_utils.hpp"
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <iostream>
 #include <vector>
 
+// Stage timing: prints elapsed ms since computeCOR() started at each
+// existing stderr checkpoint. Added during the investigation below and kept
+// on since it's cheap and directly useful for the report's performance
+// discussion -- run with `--mode buffer` and read the deltas between lines.
+static std::chrono::steady_clock::time_point g_t0;
+static void logStage(const char* label) {
+    auto now = std::chrono::steady_clock::now();
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - g_t0).count();
+    std::cerr << "  [+" << ms << "ms] " << label << "\n";
+}
+
 // Matches the Python reference: sum all projections into one sinogram, then
 // normalize to [0,1] so the MSE metric is scale-invariant across datasets.
-// One-time CPU cost, not a bottleneck vs. the 35k-combo search below.
+//
+// CORRECTION (2026-08-25): this was previously commented "one-time CPU cost,
+// not a bottleneck vs. the 35k-combo search below" -- that was wrong, and
+// the wrongness had real consequences. Stage timing (added while
+// investigating why pyopencl_backend's search was ~5x faster than this
+// binary's, same GPU, same algorithm) showed the actual search kernel takes
+// ~48ms, while this loop alone took ~11.4s -- ~240x more expensive than the
+// GPU work it was assumed not to bottleneck. Root cause: meson.build never
+// set a buildtype, so this whole binary was being compiled at -O0 the entire
+// time (fixed: buildtype=release). At -O0 a naive double-accumulation loop
+// over 180 x 1024x1024 elements doesn't get vectorized; at -O3 it does, and
+// this drops to ~0.3-0.8s. See docs/ARCHITECTURE.md for the full writeup.
 static std::vector<float> buildSinogram(const std::vector<float>& projs,
                                         int num_projs, int H, int W) {
     // Accumulate in double: naive float32 summation over 180 projections
@@ -41,6 +64,7 @@ CbPose computeCOR(const CbPara& para,
                   const SearchArgs& args,
                   const std::string& kernel_path,
                   const std::string& mode) {
+    g_t0 = std::chrono::steady_clock::now();
     bool use_buffer = (mode == "buffer");
     if (!use_buffer && mode != "image")
         throw std::runtime_error("Unknown --mode '" + mode + "' (expected image|buffer)");
@@ -48,12 +72,15 @@ CbPose computeCOR(const CbPara& para,
     // --- OpenCL setup ---
     cl::Device dev = pickGPU();
     std::cerr << "Device: " << dev.getInfo<CL_DEVICE_NAME>() << "\n";
+    logStage("device picked");
     cl::Context ctx({dev});
     cl::CommandQueue queue(ctx, dev);
+    logStage("context+queue created");
 
     // --- Sinogram: Image2D (hardware sampler) or plain Buffer (manual bilinear) ---
     int H = para.detector_height, W = para.detector_width;
     std::vector<float> sino = buildSinogram(projs, para.num_projs, H, W);
+    logStage("sinogram built (CPU)");
 
     cl::Image2D sino_img;
     cl::Buffer  sino_buf;
@@ -62,6 +89,7 @@ CbPose computeCOR(const CbPara& para,
                               W * H * sizeof(float),
                               const_cast<float*>(sino.data()));
         std::cerr << "Sinogram: " << W << "x" << H << " Buffer uploaded\n";
+        logStage("sinogram uploaded");
     } else {
         cl::ImageFormat fmt(CL_R, CL_FLOAT);
         sino_img = cl::Image2D(ctx,
@@ -111,6 +139,7 @@ CbPose computeCOR(const CbPara& para,
 
     // --- Compile kernels ---
     cl::Program prog = buildProgram(ctx, dev, kernel_path);
+    logStage("program built (JIT compile)");
 
     // --- Kernel 1: trig precomputation ---
     cl::Kernel k_trig(prog, "precompute_trig");
@@ -127,15 +156,30 @@ CbPose computeCOR(const CbPara& para,
                                cl::NDRange(std::max(na, nb)), cl::NullRange);
     queue.finish();
     std::cerr << "Trig precomputation done\n";
+    logStage("trig kernel done");
 
     // --- Kernel 2: forward search MSE ---
     cl::Kernel k_search(prog, use_buffer ? "forward_search_mse_buffer" : "forward_search_mse");
 
-    // Query hardware-preferred multiple for alignment, but floor it at 64 —
-    // with only 1000 theta steps per combo, a smaller WG under-occupies the
-    // reduction tree and adds barrier overhead relative to useful work.
-    size_t wg_mult = k_search.getWorkGroupInfo<CL_KERNEL_PREFERRED_WORK_GROUP_SIZE_MULTIPLE>(dev);
-    size_t WG_SIZE = (wg_mult >= 64) ? wg_mult : 64;
+    // Size the work-group off the device's actual max work-group size (like
+    // pyopencl_backend's OpenCLBackend.search() does: min(256, max_wg),
+    // rounded down to a power of two for the kernel's binary-tree reduction),
+    // not off CL_KERNEL_PREFERRED_WORK_GROUP_SIZE_MULTIPLE -- that value is a
+    // SIMD-width alignment hint (often 8/16/32 on this hardware), not a
+    // recommended work-group *size*. Treating it as the size (the previous
+    // logic here: floor the multiple at 64) left 4x GPU parallelism per
+    // combo unused on hardware whose real max work-group size is 256 --
+    // confirmed via profiling: pyopencl_backend's own kernel, running the
+    // same algorithm at local size 256 on this same GPU, was ~5x faster than
+    // this binary at local size 64.
+    size_t max_wg = dev.getInfo<CL_DEVICE_MAX_WORK_GROUP_SIZE>();
+    size_t WG_SIZE = std::min<size_t>(256, max_wg);
+    if (WG_SIZE & (WG_SIZE - 1)) {  // round down to the nearest power of two
+        size_t p = 1;
+        while (p * 2 <= WG_SIZE) p *= 2;
+        WG_SIZE = p;
+    }
+    if (WG_SIZE < 64) WG_SIZE = 64;  // floor: still keep some occupancy on very constrained devices
     std::cerr << "WG_SIZE: " << WG_SIZE << "\n";
 
     if (use_buffer) k_search.setArg(0, sino_buf);
@@ -158,6 +202,7 @@ CbPose computeCOR(const CbPara& para,
     k_search.setArg(16, para.detector_width);
     k_search.setArg(17, para.detector_height);
     k_search.setArg(18, cl::Local(WG_SIZE * sizeof(float)));
+    k_search.setArg(19, cl::Local(WG_SIZE * sizeof(int)));
 
     queue.enqueueNDRangeKernel(k_search,
                                cl::NullRange,
@@ -165,12 +210,14 @@ CbPose computeCOR(const CbPara& para,
                                cl::NDRange(1, WG_SIZE));
     queue.finish();
     std::cerr << "Forward search done\n";
+    logStage("search kernel done");
 
     // --- Read back results ---
     std::vector<float> h_mse(P), h_x0(P), h_y0(P);
     queue.enqueueReadBuffer(buf_mse, CL_TRUE, 0, P * sizeof(float), h_mse.data());
     queue.enqueueReadBuffer(buf_x0,  CL_TRUE, 0, P * sizeof(float), h_x0.data());
     queue.enqueueReadBuffer(buf_y0,  CL_TRUE, 0, P * sizeof(float), h_y0.data());
+    logStage("results read back");
 
     // --- Find best combo ---
     // combo_id was encoded row-major as (i_xshift * na + i_alpha) * nb + i_beta

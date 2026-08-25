@@ -1,3 +1,4 @@
+#include <chrono>
 #include <iostream>
 #include <stdexcept>
 #include <vector>
@@ -98,10 +99,14 @@ int main(int argc, char* argv[]) {
     po::notify(vm);
 
     try {
+        auto t_load0 = std::chrono::steady_clock::now();
         std::vector<float> projs;
         CbPara para = loadHDF5(vm["data"].as<std::string>(), projs);
+        auto t_load1 = std::chrono::steady_clock::now();
+        auto load_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t_load1 - t_load0).count();
         std::cerr << "Loaded " << para.num_projs << " projections, "
-                  << para.detector_width << "x" << para.detector_height << "\n";
+                  << para.detector_width << "x" << para.detector_height
+                  << " (" << load_ms << "ms)\n";
 
         SearchArgs args;
         args.xshift      = vm["xshift"].as<double>()      / 1000.0;
