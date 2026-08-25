@@ -1,7 +1,0 @@
-numpy>=1.26
-h5py>=3.10
-pyopencl>=2024.1
-mako>=1.2
-
-[dev]
-pytest>=8.0

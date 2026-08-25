@@ -1,2 +1,0 @@
-[console_scripts]
-projection-center = projection_center_searching.cli:main

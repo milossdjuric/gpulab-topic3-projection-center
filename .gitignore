@@ -2,6 +2,7 @@
 docs/
 report_outline.md
 __pycache__/
+*.egg-info/
 
 # run outputs (pose .h5/.json results, logs) and local dataset copies
 runs/
