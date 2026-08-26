@@ -1,224 +1,381 @@
-# PyOpenCL Backend — Project's Single CLI
+# Projection Center Searching and Resampling
 
-This package (imported from the teammate's repo,
-`github.com/tanya1019/projection-center`, authored via OpenAI Codex) is now
-**the single user interface for this whole project**. Everything about the
-CLI, its commands, flags, config objects, and Python package layout is
-theirs, unchanged in spirit. This repo's own contribution is connected in at
-exactly one point: **forward search's runtime execution** can be delegated
-to `forward_search/`'s C++/OpenCL implementation via `--backend cpp`,
-alongside their own two backends (`opencl`, `cpu`). Nothing else from this
-repo is wired in — resampling only ever runs through this package's own
-`opencl`/`cpu` kernels.
+This package implements the two reference tasks in the repository:
 
-## The three backends
+- projection center searching
+- projection resampling
 
-| `--backend` | What actually runs | Search | Resample |
-|---|---|---|---|
-| `opencl` (default) | This package's own PyOpenCL kernels (`center_search_reduce`, `resample_projections`) | yes | yes |
-| `cpu` | This package's own NumPy fallback | yes | yes |
-| `cpp` | **This repo's `forward_search/builddir/forward_search` binary**, invoked as a subprocess | yes | **no — raises `NotImplementedError`** |
+Fetched from `github.com/tanya1019/projection-center` and merged into this
+repository as its unified CLI. The implementation is organized as a
+reusable Python package with:
 
-`--backend cpp` is this repo's forward-search implementation reached through
-the *same* `projection-center search/resample/pipeline` commands as the
-other two — no separate script, no separate flags beyond one extra
-cpp-specific knob (`--cpp-mode`, below). Internally, `pipeline.run_search()`
-special-cases `backend_name == "cpp"`: instead of the shared
-sinogram/parameter-grid path the `opencl`/`cpu` backends use,
-`CppBackend.search_from_file()` (`backends.py`) shells out to the compiled
-binary with the same `--data`/`--xshift`/`--alpha`/`--beta`/etc. it already
-understands, reads back its HDF5 output, and returns it as a `SearchResult`
-— then `run_search()` writes that out through this package's own
-`write_pose_json()`, so the pose file `resample` reads next looks identical
-regardless of which backend produced it. `--backend cpp` for `resample` (or
-`pipeline`, at its resample stage) raises immediately and clearly, before
-touching any output file — `forward_search/` has no resampling
-implementation, on purpose (this repo's forward-search half is
-independently maintained; resampling stays entirely this package's).
+- an OpenCL backend for GPU execution
+- a NumPy CPU fallback for environments without OpenCL
+- **this repository's own C++/OpenCL implementation** (`forward_search/`),
+  reached as a third backend
+- HDF5 input and output compatible with the provided reference scripts
+- a CLI that runs on Windows, Linux, and macOS
 
-Two cpp-specific things it doesn't share with the other backends:
-- **`--cpp-mode {image,buffer}`** — forward_search/'s own `--mode`, i.e.
-  which OpenCL kernel variant (Image2D+sampler vs a plain buffer) runs.
-  Defaults to `buffer` here (not `forward_search/`'s own CLI default of
-  `image`) since `image` mode crashes on this dev machine's driver — see
-  `docs/ARCHITECTURE.md` §7.
-- **`sample-count`/`sample-angle-range`** — `forward_search.cpp` hardcodes
-  these (`N_THETA=1000`, `RANGE_DEG=30.0`) and doesn't expose them via its
-  own CLI, so `--backend cpp` raises a clear `ValueError` if you pass
-  non-default values for either — use `opencl`/`cpu` to vary them.
-- `--platform-index`/`--device-index` are ignored for `cpp` — `forward_search/`
-  always picks the first GPU it finds (`pickGPU()` in `opencl_utils.hpp`).
+Unlike the source repository, this copy does **not** expose four root
+wrapper scripts — see "Root Script Usage" below for why, and the CLI
+equivalents to use instead.
 
-## Why `forward_search/` stays a separate implementation, not a rewrite
+## What Changed
 
-This repo's primary, validated forward-search implementation was already
-the C++/OpenCL one in `forward_search/` (real correctness/speedup numbers
-in `docs/ARCHITECTURE.md`, and it's what satisfies the course's
-pybind11/`torch.utils.cpp_extension` requirement). Rather than reimplementing
-that logic a third time inside this package, `--backend cpp` just calls the
-existing, already-validated binary — the "runtime execution of forward
-search" is genuinely this repo's, everything wrapping it (CLI parsing, I/O,
-output conventions) is genuinely theirs.
+The original reference code spends most of its time in Python loops:
 
-## Update (2026-08-25): validated against the real dataset, reproducibly
+- center searching loops over every parameter candidate and every sampled angle
+- resampling loops over every detector pixel of every projection
 
-All three backends run cleanly against `data/projs_change.hdf5` and agree
-on the winning pose (xshift=-20mm, alpha=-5°, beta=4°); re-run twice each,
-byte-identical results both times:
+This version moves both expensive parts to GPU kernels:
 
-| | `cpp` | `opencl` (this package) | `cpu` (this package, NumPy) |
-|---|---|---|---|
-| Wall time (search, full 35,721-combo grid) | ~5-7s (was ~14-22s, see below) | ~3-4s | ~46-53s |
-| MSE | `2.841789e-07` | `2.840188e-07` (0.056% rel. diff from reference) | same as opencl |
+- `center_search_reduce`: one OpenCL work-group per parameter candidate, with parallel reduction across sampled angles
+- `resample_projections`: one OpenCL work-item per output pixel per projection
 
-Resampling (`opencl`/`cpu` only) runs end-to-end and produces a
-correctly-shaped output HDF5 (180×1024×1024, schema-verified).
+That structure is substantially more parallel than the reference Python implementation and matches the requirement for a higher-grade solution with better parallelization.
 
-**Solved: why `cpp` was ~5x slower.** It wasn't the OpenCL kernel — stage
-timing added to `forward_search.cpp` showed the actual GPU search kernel
-takes ~48ms; `forward_search.cpp`'s CPU-side `buildSinogram()` (a
-double-precision accumulation loop) was taking ~11.4s, because
-`forward_search/meson.build` never set a `buildtype`, defaulting to `-O0`.
-Fixed by setting `buildtype=release` there (and the same missing-optimization
-bug, same fix, in the pybind11 interface's `backend.py`). Full writeup in
-`docs/ARCHITECTURE.md` §11. The remaining ~5-7s (vs `opencl`'s ~3-4s) is
-subprocess-spawn plus a second HDF5 read that `CppBackend` pays and the
-in-process `opencl`/`cpu` backends don't — not a kernel-level difference.
-Not yet run: `--use-corrected-ref`-style validation against the known
-reference bug (see `docs/ARCHITECTURE.md` §6.1.1) — results so far were only
-compared against the *uncorrected* reference.
+This repository's own C++/OpenCL implementation (`forward_search/`) uses the
+same shape independently, reachable here as `--backend cpp`.
 
-**Three real bugs found and fixed while getting this to run** (already
-patched in this copy — see `pyproject.toml`/`requirements.txt`):
-1. `pyopencl` needs `mako` as a runtime dependency, but neither
-   `pyproject.toml` nor `requirements.txt` declared it — `pip install -e .`
-   installed pyopencl fine, but importing it then raised `ModuleNotFoundError:
-   mako` at runtime. Fixed by adding `mako>=1.2` to both files.
-2. That `ModuleNotFoundError` was being silently swallowed by a bare
-   `except ImportError: cl = None` at the top of `backends.py`, so
-   `projection-center devices` reported the misleading **"No OpenCL devices
-   found. Install an OpenCL runtime or use --backend cpu."** — sending
-   whoever hits this down a driver-debugging path instead of "install one
-   missing pip package." Not changed (structural, not this repo's code to
-   redesign), but worth knowing if this resurfaces after a dependency
-   version bump.
-3. **`OpenCLBackend.resample()` was 12x slower than it needed to be** on the
-   real dataset (48s → 3.9s, fixed 2026-08-25). It's called once per
-   streamed batch from `pipeline.run_resample()` (~12 times for 180
-   projections at the default `batch_size=16`), and on every one of those
-   calls it recreated the rotation-matrix buffer (identical every time),
-   re-fetched the `resample_projections` kernel via attribute access (the
-   exact pattern PyOpenCL's own `RepeatedKernelRetrieval` warning flags —
-   "creates a new, independent kernel, at possibly considerable expense" —
-   and it was right), and allocated/freed fresh input/output GPU buffers.
-   `strace -c` on the unfixed code showed 67% of resample's wall time in
-   `futex` and only ~8% in the actual `pwrite64` — i.e. almost none of that
-   48s was real GPU compute or disk I/O, it was driver-level setup/teardown
-   overhead paid 12 times over. Fixed by caching the kernel object, the
-   rotation buffer (keyed on the identity of the `rotation_matrix` array,
-   which `pipeline.run_resample()` does pass as the same object across all
-   its batch calls), and the input/output device buffers (grown, never
-   shrunk, across calls) on the `OpenCLBackend` instance. Verified correct:
-   output byte-identical across reruns, and matches the independent `cpu`
-   backend's output to within float32 noise (max abs diff `5.6e-4` on pixel
-   values with mean ~8, std ~8.6).
+## Repository Layout
 
-## What was left out of the original import
+```text
+.
+|-- data/                        (gitignored -- populate locally)
+|   |-- projs_change.hdf5
+|   `-- proj_shepplogan128.hdf5
+|-- Topic_3_forwardsearching.py  (untouched CPU reference -- repo root, not here)
+|-- Topic_3_resampling.py        (untouched CPU reference -- repo root, not here)
+|-- forward_search/               (this repo's C++/OpenCL implementation -- reached via --backend cpp)
+|-- projection-center/            (this package)
+|   |-- pyproject.toml
+|   |-- README.md
+|   `-- src/
+|       `-- projection_center_searching/
+|           |-- __init__.py
+|           |-- backends.py
+|           |-- cli.py
+|           |-- geometry.py
+|           |-- hdf5_io.py
+|           |-- models.py
+|           `-- pipeline.py
+`-- docs/ARCHITECTURE.md          (full design writeup, gitignored)
+```
 
-The original repo also had four root wrapper scripts
-(`Topic_3_forwardsearching.py`, `_cpu.py`, `Topic_3_resampling.py`,
-`_cpu.py`). They were **not** imported here because:
-1. Their filenames collide with this repo's canonical, untouched CPU
-   reference scripts at the repo root (`Topic_3_forwardsearching.py`,
-   `Topic_3_resampling.py`) — those must stay byte-for-byte unmodified per
-   the course rubric, and in the source repo the same filenames had been
-   overwritten with GPU-calling entrypoints instead, losing the original
-   reference entirely.
-2. They added nothing beyond thin CLI plumbing — use the `projection-center`
-   CLI below instead.
+## Requirements
 
-Also left out: `data/`, `outputs/`, `projs_resample.hdf5`,
-`real_cb_pose.json` — output/data artifacts from the source repo, gitignored
-here the same way `runs/`/`data/` are elsewhere in this repo.
+- Python 3.10 or newer
+- `numpy`
+- `h5py`
+- `pyopencl`
+- `mako` (required by `pyopencl` at runtime; not declared upstream — see "Fixes Applied In This Copy")
+- an installed OpenCL runtime
 
-## Install
+Python dependencies are declared in `pyproject.toml`.
+
+## OpenCL Setup
+
+You need both the Python package and a system OpenCL runtime.
+
+### Windows
+
+Install:
+
+- NVIDIA driver with OpenCL support, if using an NVIDIA GPU
+- AMD Adrenalin driver or ROCm-compatible OpenCL runtime, if using an AMD GPU
+- Intel Graphics Driver or Intel oneAPI OpenCL runtime, if using Intel GPU or CPU OpenCL
+
+Then install the Python package:
+
+```powershell
+py -m pip install -e .
+```
+
+If `py` is not available on your machine, use your Python executable directly:
+
+```powershell
+python -m pip install -e .
+```
+
+### Linux
+
+Install your vendor OpenCL loader and runtime first. Common packages include:
+
+- Ubuntu or Debian: `ocl-icd-opencl-dev`, plus vendor runtime packages
+- Fedora: `ocl-icd`, plus vendor runtime packages
+- Arch: `ocl-icd`, plus vendor runtime packages
+
+Then install Python dependencies:
 
 ```bash
 cd projection-center
 python3 -m pip install -e .
 ```
 
-Requires an OpenCL runtime (`clinfo -l` should list a GPU) plus `mako` (see
-the dependency-bug note above — already added to
-`pyproject.toml`/`requirements.txt`). CPU fallback: pass `--backend cpu`
-below. `--backend cpp` additionally requires `forward_search/builddir/forward_search`
-to already be built (`cd forward_search && meson setup builddir && meson
-compile -C builddir`) — if it's built somewhere else, point
-`FORWARD_SEARCH_CPP_BINARY`/`FORWARD_SEARCH_CPP_KERNEL` env vars at it
-instead of the default `forward_search/builddir/forward_search` /
-`forward_search/kernels/forward_search.cl` paths.
+### macOS
 
-## Usage
+`pyopencl` can still be used, but macOS OpenCL support is deprecated and depends on Apple's system framework. For reliable GPU execution, Linux or Windows is preferred.
+
+Install:
 
 ```bash
-# List OpenCL devices
+python3 -m pip install -e .
+```
+
+If OpenCL is unavailable on your macOS machine, use the CPU backend:
+
+```bash
+projection-center pipeline --backend cpu --data data/projs_change.hdf5
+```
+
+## Input Data
+
+Datasets are expected under `data/` (repo root), but that directory is
+ignored by Git and must be populated locally:
+
+- `data/projs_change.hdf5`
+- `data/proj_shepplogan128.hdf5`
+
+The reader expects the same HDF5 keys used by the reference scripts:
+`Projection`, `pixelSize`, `SDD`, `SOD`, `voxelSize`, `Volumen_num_xz`,
+`Volumen_num_y`, `num_projs`, `detector_width`, `detector_height`, `Angle`.
+
+## Root Script Usage
+
+The source repository documented four root wrapper scripts
+(`Topic_3_forwardsearching.py`, `_cpu.py`, `Topic_3_resampling.py`,
+`_cpu.py`) as an alternative to the CLI. **They are not present here.**
+Their filenames collide with this repository's canonical, untouched CPU
+reference scripts at the repo root — those must stay byte-for-byte
+unmodified per the course rubric, and in the source repo the same filenames
+had been overwritten with GPU-calling entrypoints instead, losing the
+original reference. Use the CLI equivalents instead:
+
+| Source repo script | CLI equivalent here |
+|---|---|
+| `python Topic_3_forwardsearching.py --data ...` | `projection-center search --backend opencl --data ...` |
+| `python Topic_3_forwardsearching_cpu.py --data ...` | `projection-center search --backend cpu --data ...` |
+| `python Topic_3_resampling.py --data ... --pose ...` | `projection-center resample --backend opencl --data ... --pose ...` |
+| `python Topic_3_resampling_cpu.py --data ... --pose ...` | `projection-center resample --backend cpu --data ... --pose ...` |
+
+This repository additionally has no equivalent for `forward_search/`'s own
+CLI (`--backend cpp`) in the source repo, since that implementation didn't
+exist there — see "Backend Selection" below.
+
+## CLI Usage
+
+After installation, the package exposes the command:
+
+```text
+projection-center
+```
+
+### 1. List OpenCL Devices
+
+```bash
 projection-center devices
-
-# Forward search -- pick the implementation with --backend
-projection-center search --backend cpp      --data ../data/projs_change.hdf5 --output-pose real_cb_pose.json  # forward_search/'s C++/OpenCL
-projection-center search --backend opencl   --data ../data/projs_change.hdf5 --output-pose real_cb_pose.json  # this package, GPU (default)
-projection-center search --backend cpu      --data ../data/projs_change.hdf5 --output-pose real_cb_pose.json  # this package, CPU fallback
-
-# Resampling -- opencl/cpu only, needs a pose JSON from any search backend above
-projection-center resample --data ../data/projs_change.hdf5 --pose real_cb_pose.json --output-data projs_resample.hdf5
-
-# Full pipeline (search then resample) -- backend applies to both stages;
-# --backend cpp will search successfully then raise clearly at the resample stage
-projection-center pipeline --data ../data/projs_change.hdf5
 ```
 
-## MSE correction (2026-08-26)
+Example output:
 
-`CpuBackend.search()` and `OpenCLBackend`'s `center_search_reduce` kernel
-were patched from tanya's original math: the MSE now normalizes by the
-count of *valid* sample pairs (both rays on-detector, at least one side
-with real signal above `MIN_SIGNAL`/`_MIN_SIGNAL = 0.01`) instead of always
-dividing by the fixed `sample_count`. The original always-divide-by-N
-version let a candidate pose fake a low MSE by pushing rays off-detector or
-into background — harmless on `projs_change.hdf5` (huge detector, rays
-never leave it) but produced a degenerate MSE=0.0 boundary result on
-`proj_shepplogan128.hdf5` (small detector). `Topic_3_forwardsearching.py`
-itself has the identical issue and was **not** touched (rubric requires it
-stay unmodified) — confirmed the literal reference reproduces the same
-numbers and the same eventual crash. Full investigation and a documented
-remaining limitation (xshift is still weakly determined on the shepplogan
-dataset) in `docs/ARCHITECTURE.md` §12.
-
-A third fix (relative instead of absolute error, to also counter a
-dim-pixel bias) was tried and **reverted** — it changed the
-already-reference-matching result on `projs_change.hdf5` (beta 4°→5°, no
-longer matching `Topic_3_forwardsearching.py`). Unlike the two fixes above,
-it optimizes a genuinely different objective rather than just excluding
-meaningless comparisons, so it wasn't safe to keep. See
-`docs/ARCHITECTURE.md` §12.4.
-
-## Package layout
-
+```text
+platform=0 device=0 name=... type=GPU
 ```
-src/projection_center_searching/
-├── models.py     dataclasses: ConeBeamParameters, SearchConfig, SearchResult, ResampleConfig
-├── hdf5_io.py     batch-streamed HDF5 read/write, same schema as forward_search/
-├── geometry.py    host-side pose/rotation-matrix math (mirrors Topic_3_resampling.py's
-│                  get_rotation_matrix/get_cb_para logic)
-├── backends.py    CpuBackend + OpenCLBackend (this package's own kernels: center_search_reduce,
-│                  one work-group per candidate with local-memory reduction -- same shape as
-│                  forward_search_mse_buffer -- and resample_projections, one work-item per
-│                  output pixel per projection, batched) plus CppBackend (subprocess-delegates
-│                  search to forward_search/, added in this repo's merge)
-├── pipeline.py    run_search / run_resample / run_pipeline -- orchestration; run_search
-│                  special-cases backend_name=="cpp" to call the file path directly instead of
-│                  the shared sinogram/grid path the other two backends use
-├── cli.py         the `projection-center` command (devices / search / resample / pipeline);
-│                  --backend now includes "cpp", plus the cpp-only --cpp-mode flag
-└── __main__.py    `python -m projection_center_searching` entrypoint
+
+### 2. Search Only
+
+```bash
+projection-center search --data data/projs_change.hdf5 --output-pose real_cb_pose.json
 ```
+
+Useful search parameters:
+
+- `--xshift` search half-range in mm
+- `--alpha` search half-range in degrees
+- `--beta` search half-range in degrees
+- `--xshift-step` search step in mm
+- `--alpha-step` search step in degrees
+- `--beta-step` search step in degrees
+- `--sample-count` number of angular samples per candidate
+- `--sample-angle-range` search sample span in degrees
+
+Example with explicit ranges:
+
+```bash
+projection-center search --data data/projs_change.hdf5 --xshift 40 --alpha 10 --beta 10 --xshift-step 1 --alpha-step 1 --beta-step 1 --sample-count 1000 --sample-angle-range 30 --output-pose real_cb_pose.json
+```
+
+### 3. Resample Only
+
+```bash
+projection-center resample --data data/projs_change.hdf5 --pose real_cb_pose.json --output-data projs_resample.hdf5 --downsample 1 --batch-size 16
+```
+
+### 4. Run the Full Pipeline
+
+```bash
+projection-center pipeline --data data/projs_change.hdf5 --output-pose real_cb_pose.json --output-data projs_resample.hdf5
+```
+
+### Backend Selection
+
+The default backend is OpenCL:
+
+```bash
+projection-center pipeline --data data/projs_change.hdf5
+```
+
+To force CPU execution:
+
+```bash
+projection-center pipeline --backend cpu --data data/projs_change.hdf5
+```
+
+To choose a specific OpenCL device:
+
+```bash
+projection-center pipeline --data data/projs_change.hdf5 --platform-index 0 --device-index 0
+```
+
+**This repository adds a third backend, `cpp`**, delegating to
+`forward_search/`'s own C++/OpenCL implementation instead of this
+package's kernels:
+
+```bash
+projection-center search --backend cpp --data data/projs_change.hdf5 --output-pose real_cb_pose.json
+```
+
+`--backend cpp` only implements search, not resample (`forward_search/` has
+no resampling implementation, on purpose — resampling stays exclusively
+this package's). It also has one extra flag, `--cpp-mode {image,buffer}`
+(forwarding to `forward_search/`'s own `--mode`, default `buffer`), and
+doesn't support `--platform-index`/`--device-index` or non-default
+`--sample-count`/`--sample-angle-range` (see "Limitations").
+
+## Output Files
+
+### Pose JSON
+
+Search writes a JSON file like:
+
+```json
+{
+  "center_point": [0.0, 0.0],
+  "xshift": 0.0,
+  "alpha": 0.0,
+  "beta": 0.0,
+  "MSE": 0.0
+}
+```
+
+### Resampled HDF5
+
+Resampling writes a new HDF5 file containing:
+
+- updated `pixelSize`
+- updated `SDD`
+- updated `SOD`
+- preserved angle and volume metadata
+- the resampled `Projection` stack
+
+## Parallelization Details
+
+### Center Search
+
+The center search kernel is organized so that:
+
+- each candidate `(xshift, alpha, beta)` uses one OpenCL work-group
+- work-items inside the work-group process different angular samples in parallel
+- a local-memory reduction produces one MSE value per candidate
+
+That avoids launching one Python loop iteration per candidate and keeps the expensive interpolation work on the GPU.
+
+### Resampling
+
+The resampling kernel is organized so that:
+
+- each work-item computes one output detector pixel
+- the third global dimension is the projection index inside the current batch
+- projections are processed in batches to control GPU memory use
+
+This scales well for large detector sizes and large projection stacks.
+
+The HDF5 pipeline is also streamed in batches during search and resampling, so the implementation does not need to load the full projection stack into memory before computation starts.
+
+## Notes About Accuracy
+
+- The GPU kernels use `float32` arithmetic for portability and speed.
+- The host-side geometry setup uses `float64`.
+- The CPU fallback uses NumPy vectorization and is intended for portability and debugging, not peak performance.
+- All three backends (`opencl`, `cpu`, `cpp`) agree on the found pose to
+  float32 precision on both datasets in this repository, reproducibly
+  across reruns.
+
+If you need strict numerical comparison against the original scripts, compare:
+
+- the selected pose JSON
+- the output HDF5 metadata
+- slices or summary statistics from the resampled projection stack
+
+## Example End-to-End Commands
+
+```bash
+projection-center pipeline --data data/projs_change.hdf5 --output-pose outputs/real_pose.json --output-data outputs/real_resampled.hdf5
+
+projection-center pipeline --data data/proj_shepplogan128.hdf5 --output-pose outputs/shepp_pose.json --output-data outputs/shepp_resampled.hdf5
+```
+
+## Development Notes
+
+- The new code does not use hardcoded Linux-only paths.
+- Paths are handled through CLI arguments and `pathlib`.
+- The package is suitable for installation on Windows, Linux, and macOS.
+- `--backend cpp` is this repository's own addition, delegating to
+  `forward_search/`'s compiled binaries via subprocess rather than
+  reimplementing its kernels here.
+
+## Verification
+
+Recommended checks after installation:
+
+1. `projection-center devices`
+2. `projection-center search --data data/projs_change.hdf5`
+3. `projection-center resample --data data/projs_change.hdf5 --pose real_cb_pose.json`
+4. Inspect the generated JSON and HDF5 outputs
+5. Repeat 2-3 with `--backend cpp` and `--backend cpu`, confirm the same pose
+
+## Limitations
+
+- This repository does not vendor GPU drivers or OpenCL runtimes.
+- macOS OpenCL support is deprecated by Apple and may fall back to CPU-only workflows in practice.
+- Runtime performance depends heavily on the installed OpenCL implementation and device memory.
+- `--backend cpp` only implements search; use `opencl`/`cpu` for resample or pipeline.
+- `--backend cpp` doesn't support `--platform-index`/`--device-index` (always uses the first GPU found) or non-default `--sample-count`/`--sample-angle-range` (`forward_search.cpp` hardcodes these).
+- On the small `proj_shepplogan128.hdf5` dataset, the found `xshift` is weakly determined (a documented limitation of the algorithm itself, not this implementation) — see `docs/ARCHITECTURE.md` §12.
+
+## Fixes Applied In This Copy
+
+Not present upstream; found and fixed while integrating this package into
+the merged repository. All verified to leave `projs_change.hdf5`'s result
+unchanged.
+
+1. **Missing `mako` dependency.** `pyopencl` needs it at runtime; neither
+   `pyproject.toml` nor `requirements.txt` declared it, so
+   `pip install -e .` succeeded but importing `pyopencl` raised
+   `ModuleNotFoundError: mako`. Added `mako>=1.2` to both files.
+2. **`OpenCLBackend.resample()` was 12x slower than necessary** (48s → 3.9s
+   on the real dataset) — it recreated the rotation buffer, re-fetched the
+   kernel, and reallocated GPU buffers on every one of the ~12 streamed
+   batches instead of reusing them. Fixed by caching all three on the
+   backend instance.
+3. **MSE metric normalized by a fixed sample count**, letting a candidate
+   pose fake a low MSE by pushing rays off-detector or into background —
+   harmless on the large real dataset, but produced a degenerate MSE=0.0
+   boundary result on the small `proj_shepplogan128.hdf5` dataset. Now
+   normalizes by the count of valid, signal-bearing pairs instead.
+   `Topic_3_forwardsearching.py` has the identical property and was not
+   touched (confirmed it reproduces the same numbers).
+
+Full write-ups, including a fourth fix that was tried and deliberately
+reverted (it regressed agreement with the Python reference), are in
+`docs/ARCHITECTURE.md` §11-§12.
