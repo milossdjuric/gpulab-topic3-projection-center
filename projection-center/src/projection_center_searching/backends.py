@@ -515,6 +515,23 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
+def _run_cpp_quietly(cmd: list[str]) -> None:
+    # forward_search/'s binaries print their own stage diagnostics
+    # (device pick, sinogram build, kernel timings) to stderr -- captured
+    # here rather than let through, so --backend cpp's output matches the
+    # quiet, 3-line summary opencl/cpu already print (see cli.py's own
+    # print statements, unmodified from the source repo). On failure, the
+    # captured output is surfaced in the raised error instead of being
+    # lost, so nothing is harder to debug than before.
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"cpp backend command failed (exit {result.returncode}): {' '.join(cmd)}\n"
+            f"--- stdout ---\n{result.stdout}"
+            f"--- stderr ---\n{result.stderr}"
+        )
+
+
 def _cpp_binary_path() -> Path:
     override = os.environ.get("FORWARD_SEARCH_CPP_BINARY")
     if override:
@@ -593,7 +610,7 @@ class CppBackend:
                 "--beta-step", str(config.beta_step_deg),
                 "--output", str(output_h5),
             ]
-            subprocess.run(cmd, check=True)
+            _run_cpp_quietly(cmd)
 
             with h5py.File(output_h5, "r") as handle:
                 return SearchResult(
@@ -627,7 +644,7 @@ class CppBackend:
             "--batch-size", str(resample_config.batch_size),
             "--output", str(output_data_path),
         ]
-        subprocess.run(cmd, check=True)
+        _run_cpp_quietly(cmd)
 
 
 def get_backend(

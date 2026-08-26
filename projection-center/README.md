@@ -375,6 +375,13 @@ unchanged.
    normalizes by the count of valid, signal-bearing pairs instead.
    `Topic_3_forwardsearching.py` has the identical property and was not
    touched (confirmed it reproduces the same numbers).
+4. **`--backend cpp`'s output didn't match this package's quiet style.**
+   `forward_search/`'s binaries print their own stage diagnostics (device
+   pick, sinogram build, kernel timings) straight to stderr, which used to
+   pass through unfiltered. `CppBackend` now captures that output on
+   success (matching `opencl`/`cpu`'s plain 3-line summary), but still
+   surfaces it in full if the subprocess actually fails, so nothing is
+   harder to debug than before.
 
 Full write-ups, including a fourth fix that was tried and deliberately
 reverted (it regressed agreement with the Python reference), are in
