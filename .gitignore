@@ -7,3 +7,5 @@ __pycache__/
 # run outputs (pose .h5/.json results, logs) and local dataset copies
 runs/
 data/
+outputs/
+.venv/
