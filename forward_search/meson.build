@@ -10,9 +10,9 @@ boost  = dependency('boost', modules: ['program_options'])
 boost_json = declare_dependency(link_args: ['-lboost_json'])
 
 executable('forward_search',
-  ['main.cpp', 'forward_search.cpp'],
+  ['src/main.cpp', 'src/forward_search.cpp'],
   dependencies: [opencl, hdf5, boost])
 
 executable('forward_search_resample',
-  ['resample_main.cpp', 'resample.cpp'],
+  ['src/resample_main.cpp', 'src/resample.cpp'],
   dependencies: [opencl, hdf5, boost, boost_json])

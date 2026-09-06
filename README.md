@@ -26,7 +26,7 @@ Both are reachable through **one CLI**, `projection-center`, via
 ## What Changed
 
 The original reference scripts (`Topic_3_forwardsearching.py`,
-`Topic_3_resampling.py`, at this repo's root, kept byte-for-byte unmodified)
+`Topic_3_resampling.py`, in `reference/`, kept byte-for-byte unmodified)
 spend most of their time in plain Python loops:
 
 - center searching loops over every parameter candidate and every sampled angle
@@ -54,14 +54,17 @@ side by side through the same CLI, is exactly that.
 |-- data/                            (gitignored -- populate locally)
 |   |-- projs_change.hdf5
 |   `-- proj_shepplogan128.hdf5
-|-- Topic_3_forwardsearching.py       untouched CPU reference
-|-- Topic_3_resampling.py             untouched CPU reference
+|-- reference/                        untouched CPU reference implementation
+|   |-- Topic_3_forwardsearching.py
+|   `-- Topic_3_resampling.py
 |-- forward_search/                   this repo's C++/OpenCL implementation
-|   |-- forward_search.cpp/.hpp        forward search host code
-|   |-- resample.cpp/.hpp              resampling host code
-|   |-- main.cpp / resample_main.cpp   CLI entrypoints (meson-built binaries)
+|   |-- src/
+|   |   |-- forward_search.cpp/.hpp     forward search host code
+|   |   |-- resample.cpp/.hpp           resampling host code
+|   |   |-- main.cpp / resample_main.cpp  CLI entrypoints (meson-built binaries)
+|   |   `-- backend.py / pybind_backend.cpp  pybind11 Python interface
 |   |-- kernels/*.cl                   OpenCL C kernels
-|   |-- backend.py / pybind_backend.cpp  pybind11 Python interface
+|   |-- tests/                         smoke + CLI-vs-backend regression tests
 |   `-- README.md
 |-- projection-center/                fetched Python/PyOpenCL implementation
 |   |-- pyproject.toml
@@ -71,8 +74,11 @@ side by side through the same CLI, is exactly that.
 |       |-- cli.py                     the `projection-center` command
 |       |-- geometry.py, hdf5_io.py, models.py, pipeline.py
 |       `-- __init__.py, __main__.py
-|-- docs/ARCHITECTURE.md              (gitignored) full design writeup
-|-- PROGRESS_REPORT.md / .pdf         mid-term progress report
+|-- docs/                             (gitignored)
+|   |-- ARCHITECTURE.md                full design writeup
+|   |-- course/                        course-provided PDFs (exercise sheets, etc.)
+|   `-- reports/                       our submitted report PDFs
+|-- PROGRESS_REPORT.md                mid-term progress report (source; PDF in docs/reports/)
 `-- runs/                             (gitignored) validation run outputs/logs
 ```
 
@@ -127,13 +133,13 @@ Both use the same HDF5 schema: `Projection`, `pixelSize`, `SDD`, `SOD`,
 
 ## Root Script Usage
 
-`Topic_3_forwardsearching.py` and `Topic_3_resampling.py` at the repo root
+`Topic_3_forwardsearching.py` and `Topic_3_resampling.py` in `reference/`
 are the **untouched, serial CPU reference** — required to stay unmodified
 per the course rubric, not GPU-callable entrypoints:
 
 ```bash
-python3 Topic_3_forwardsearching.py --data data/projs_change.hdf5
-python3 Topic_3_resampling.py --data data/projs_change.hdf5 --pose real_cb_pose.json
+python3 reference/Topic_3_forwardsearching.py --data data/projs_change.hdf5
+python3 reference/Topic_3_resampling.py --data data/projs_change.hdf5 --pose real_cb_pose.json
 ```
 
 For anything GPU-accelerated (or a faster vectorized CPU path), use the CLI
@@ -224,9 +230,9 @@ calls across the 35,721-combo grid.
 ## Example End-to-End Commands
 
 ```bash
-projection-center pipeline --data data/projs_change.hdf5 --output-pose runs/real_pose.json --output-data runs/real_resampled.hdf5
+projection-center pipeline --data data/projs_change.hdf5 --output-pose runs/pipeline/opencl/pose.json --output-data runs/pipeline/opencl/resampled.hdf5
 
-projection-center pipeline --data data/proj_shepplogan128.hdf5 --output-pose runs/shepp_pose.json --output-data runs/shepp_resampled.hdf5
+projection-center pipeline --data data/proj_shepplogan128.hdf5 --output-pose runs/pipeline/shepplogan/pose.json --output-data runs/pipeline/shepplogan/resampled.hdf5
 ```
 
 ## Development Notes

@@ -59,7 +59,7 @@ def load(path):
 
 def run_reference(data_path, out_path, xshift, alpha, beta,
                   xshift_step, alpha_step, beta_step):
-    script = os.path.join(os.path.dirname(__file__), "Topic_3_forwardsearching.py")
+    script = os.path.join(os.path.dirname(__file__), "reference", "Topic_3_forwardsearching.py")
     cmd = [
         sys.executable, script,
         "--data", data_path,
@@ -141,6 +141,9 @@ def run_corrected_reference(data_path, out_path, xshift, alpha, beta,
     """Runs Topic_3_forwardsearching.Compute_COR in-process with
     get_linear_interpolate_MSE monkey-patched to the zero-init-on-oob
     version above. The file on disk is never written to."""
+    reference_dir = os.path.join(os.path.dirname(__file__), "reference")
+    if reference_dir not in sys.path:
+        sys.path.insert(0, reference_dir)
     import Topic_3_forwardsearching as ref_mod
 
     orig_fn = ref_mod.get_linear_interpolate_MSE

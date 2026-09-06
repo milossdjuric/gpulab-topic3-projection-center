@@ -70,7 +70,7 @@ again.
 | `--beta-step` | `1.0` | Grid step for beta, degrees |
 | `--kernel` | `kernels/forward_search.cl` | Path to the OpenCL kernel source |
 | `--mode` | `image` | Sinogram data format: `image` (Image2D+sampler) or `buffer` (manual bilinear) |
-| `--output` | `runs/real_cb_pose.h5` | Output HDF5 path |
+| `--output` | `runs/forward_search_cli/real_cb_pose.h5` | Output HDF5 path |
 
 Run outputs, logs, and local dataset copies aren't meant to be committed —
 `--output` defaults into `runs/` (created automatically if missing), which is
@@ -97,7 +97,7 @@ meters for xshift — same units as internal computation), plus
 ## Validating against the Python reference
 
 ```bash
-python3 ../validate_forward_search.py --gpu runs/real_cb_pose.h5 --run-ref \
+python3 ../validate_forward_search.py --gpu runs/forward_search_cli/real_cb_pose.h5 --run-ref \
     --data /path/to/projs_change.hdf5
 ```
 
@@ -154,6 +154,7 @@ Per course requirement, the OpenCL forward search is also callable from Python,
 without going through the CLI at all:
 
 ```python
+# run from forward_search/src/, or add it to sys.path first
 from backend import _backend
 
 result = _backend.search(
@@ -167,7 +168,7 @@ result = _backend.search(
 # result: {"xshift", "alpha", "beta", "MSE", "center_x", "center_y"}
 ```
 
-The first call JIT-compiles `pybind_backend.cpp` + `forward_search.cpp` via
+The first call JIT-compiles `src/pybind_backend.cpp` + `src/forward_search.cpp` via
 `torch.utils.cpp_extension.load()` (cached afterwards, so later calls are fast).
 No separate build step, no meson — this path is entirely independent of the
 CLI's `builddir/`, including its optimization flags: `backend.py` passes
@@ -178,7 +179,7 @@ slowdown the CLI's missing `meson.build buildtype` caused; see
 clear the JIT cache once to pick it up:
 `rm -rf ~/.cache/torch_extensions/*/forward_search_backend`.
 
-See `run_backend_example.py` for a full read-HDF5 → search → write-HDF5 example,
+See `src/run_backend_example.py` for a full read-HDF5 → search → write-HDF5 example,
 matching the flow the course requires (Python owns all I/O; the backend is pure
 compute).
 

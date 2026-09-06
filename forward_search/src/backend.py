@@ -2,7 +2,7 @@ import os
 from torch.utils.cpp_extension import load
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
-kernel_dir = os.path.join(current_dir, "kernels")
+kernel_dir = os.path.join(os.path.dirname(current_dir), "kernels")
 
 _backend = load(
     name="forward_search_backend",

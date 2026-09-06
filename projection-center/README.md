@@ -44,8 +44,9 @@ same shape independently, reachable here as `--backend cpp`.
 |-- data/                        (gitignored -- populate locally)
 |   |-- projs_change.hdf5
 |   `-- proj_shepplogan128.hdf5
-|-- Topic_3_forwardsearching.py  (untouched CPU reference -- repo root, not here)
-|-- Topic_3_resampling.py        (untouched CPU reference -- repo root, not here)
+|-- reference/                   (untouched CPU reference -- repo root, not here)
+|   |-- Topic_3_forwardsearching.py
+|   `-- Topic_3_resampling.py
 |-- forward_search/               (this repo's C++/OpenCL implementation -- reached via --backend cpp)
 |-- projection-center/            (this package)
 |   |-- pyproject.toml
@@ -146,7 +147,7 @@ The source repository documented four root wrapper scripts
 (`Topic_3_forwardsearching.py`, `_cpu.py`, `Topic_3_resampling.py`,
 `_cpu.py`) as an alternative to the CLI. **They are not present here.**
 Their filenames collide with this repository's canonical, untouched CPU
-reference scripts at the repo root — those must stay byte-for-byte
+reference scripts in `reference/` — those must stay byte-for-byte
 unmodified per the course rubric, and in the source repo the same filenames
 had been overwritten with GPU-calling entrypoints instead, losing the
 original reference. Use the CLI equivalents instead:
