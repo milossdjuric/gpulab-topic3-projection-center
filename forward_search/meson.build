@@ -7,7 +7,17 @@ boost  = dependency('boost', modules: ['program_options'])
 # (meson's boost dependency() doesn't recognize 'json' as a module name the
 # way it does 'program_options') -- used only by resample_main.cpp to parse
 # the pose JSON either forward-search implementation writes.
-boost_json = declare_dependency(link_args: ['-lboost_json'])
+#
+# Library name isn't portable: Linux/apt names it plain boost_json, but
+# MSYS2/MinGW builds Boost with a "-mt" (multi-threaded) suffix on every
+# component, same as boost_program_options-mt above -- so try that name
+# first and fall back to the plain one, instead of hardcoding either.
+cpp = meson.get_compiler('cpp')
+boost_json_lib = cpp.find_library('boost_json-mt', required: false)
+if not boost_json_lib.found()
+  boost_json_lib = cpp.find_library('boost_json', required: true)
+endif
+boost_json = declare_dependency(dependencies: boost_json_lib)
 
 executable('forward_search',
   ['src/main.cpp', 'src/forward_search.cpp'],
