@@ -73,6 +73,7 @@ static void writeHDF5(const std::string& path, const CbPose& pose) {
     writeScalar(file, "alpha",  pose.alpha);
     writeScalar(file, "beta",   pose.beta);
     writeScalar(file, "MSE",    pose.mse);
+    writeScalar(file, "kernel_ms", pose.kernel_ms);
 
     double center[2] = {pose.center_x, pose.center_y};
     hsize_t dim[1] = {2};

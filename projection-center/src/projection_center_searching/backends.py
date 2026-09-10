@@ -70,14 +70,14 @@ __kernel void center_search_reduce(
     __global const float *sinogram,
     __global const float *alpha_values,
     __global const float *beta_values,
-    __global const float *theta0_values,
+    __global const float *tan_theta0_values,
+    __global const float *tan_dtheta_values,
     __global float *mse_values,
     const float sdd,
     const int detector_width,
     const int detector_height,
     const float pixel_size,
-    const int sample_count,
-    const float angle_step)
+    const int sample_count)
 {
     int lane = get_local_id(0);
     int workgroup_size = get_local_size(0);
@@ -85,7 +85,7 @@ __kernel void center_search_reduce(
 
     float alpha = alpha_values[parameter_index];
     float beta = beta_values[parameter_index];
-    float theta0 = theta0_values[parameter_index];
+    float tan_theta0 = tan_theta0_values[parameter_index];
 
     float sin_a = sin(alpha);
     float cos_a = cos(alpha);
@@ -95,13 +95,18 @@ __kernel void center_search_reduce(
     float local_sum = 0.0f;
     int local_count = 0;
 
+    // tan_dtheta_values is identical for every candidate pose (the sampled
+    // angles don't depend on alpha/beta/tan_theta0), precomputed once on
+    // the host instead of recomputed here per candidate. tan(theta0 +/-
+    // dtheta) then comes from the tangent addition/subtraction formula,
+    // pure multiply/add/divide, no trig call in this hot loop at all.
+    // Ported from forward_search.cl's identical optimization (see
+    // OPTIMIZATIONS.md).
     for (int sample_index = lane; sample_index < sample_count; sample_index += workgroup_size) {
-        float nearest_theta = angle_step * (float)sample_index;
-        float theta = nearest_theta + theta0;
-        float reflect_theta = -nearest_theta + theta0;
+        float tan_dtheta = tan_dtheta_values[sample_index];
 
-        float tan_t = tan(theta);
-        float tan_rt = tan(reflect_theta);
+        float tan_t  = (tan_theta0 + tan_dtheta) / (1.0f - tan_theta0 * tan_dtheta);
+        float tan_rt = (tan_theta0 - tan_dtheta) / (1.0f + tan_theta0 * tan_dtheta);
 
         float temp = sdd / (tan_t * sin_a * sin_b + cos_b);
         float rtemp = sdd / (tan_rt * sin_a * sin_b + cos_b);
@@ -234,6 +239,7 @@ class SearchArtifacts:
     mse_values: np.ndarray
     x0: np.ndarray
     y0: np.ndarray
+    kernel_ms: float | None = None
 
 
 class CpuBackend:
@@ -244,7 +250,7 @@ class CpuBackend:
         sinogram: np.ndarray,
         alpha: np.ndarray,
         beta: np.ndarray,
-        theta0: np.ndarray,
+        tan_theta0: np.ndarray,
         x0: np.ndarray,
         y0: np.ndarray,
         cb_params: ConeBeamParameters,
@@ -253,6 +259,9 @@ class CpuBackend:
         sample_angles = np.arange(config.sample_count, dtype=np.float64) * (
             np.deg2rad(config.sample_angle_range_deg) / config.sample_count
         )
+        # Precomputed once, identical for every candidate -- see the
+        # matching comment on the OpenCL kernel above.
+        tan_dtheta = np.tan(sample_angles)
         detector_width = cb_params.detector_width
         detector_height = cb_params.detector_height
         pixel_size = cb_params.pixel_size
@@ -265,10 +274,9 @@ class CpuBackend:
             sin_b = np.sin(beta[idx])
             cos_b = np.cos(beta[idx])
 
-            theta = sample_angles + theta0[idx]
-            reflect_theta = -sample_angles + theta0[idx]
-            tan_t = np.tan(theta)
-            tan_rt = np.tan(reflect_theta)
+            t0 = tan_theta0[idx]
+            tan_t = (t0 + tan_dtheta) / (1.0 - t0 * tan_dtheta)
+            tan_rt = (t0 - tan_dtheta) / (1.0 + t0 * tan_dtheta)
 
             temp = sdd / (tan_t * sin_a * sin_b + cos_b)
             rtemp = sdd / (tan_rt * sin_a * sin_b + cos_b)
@@ -361,7 +369,11 @@ class OpenCLBackend:
         device = devices[device_index]
         self.device = device
         self.context = cl.Context(devices=[device])
-        self.queue = cl.CommandQueue(self.context)
+        # PROFILING_ENABLE lets search() read back the search kernel's real
+        # device-side execution time (kernel_ms) via event profiling, not a
+        # host-side wall-clock guess -- same approach as forward_search/'s
+        # own kernel_ms.
+        self.queue = cl.CommandQueue(self.context, properties=cl.command_queue_properties.PROFILING_ENABLE)
         self.program = cl.Program(self.context, KERNEL_SOURCE).build()
 
         # resample() is called once per streamed batch from pipeline.run_resample()
@@ -385,7 +397,7 @@ class OpenCLBackend:
         sinogram: np.ndarray,
         alpha: np.ndarray,
         beta: np.ndarray,
-        theta0: np.ndarray,
+        tan_theta0: np.ndarray,
         x0: np.ndarray,
         y0: np.ndarray,
         cb_params: ConeBeamParameters,
@@ -399,7 +411,17 @@ class OpenCLBackend:
         )
         alpha_buffer = cl.Buffer(self.context, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=np.asarray(alpha, dtype=np.float32))
         beta_buffer = cl.Buffer(self.context, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=np.asarray(beta, dtype=np.float32))
-        theta0_buffer = cl.Buffer(self.context, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=np.asarray(theta0, dtype=np.float32))
+        tan_theta0_buffer = cl.Buffer(self.context, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=np.asarray(tan_theta0, dtype=np.float32))
+        # Identical for every candidate pose -- precomputed once here rather
+        # than recomputed per candidate inside the kernel. See the matching
+        # comment on center_search_reduce above.
+        sample_angles = np.arange(config.sample_count, dtype=np.float64) * (
+            np.deg2rad(config.sample_angle_range_deg) / config.sample_count
+        )
+        tan_dtheta_buffer = cl.Buffer(
+            self.context, mf.READ_ONLY | mf.COPY_HOST_PTR,
+            hostbuf=np.asarray(np.tan(sample_angles), dtype=np.float32),
+        )
         mse_values = np.empty(alpha.shape[0], dtype=np.float32)
         mse_buffer = cl.Buffer(self.context, mf.WRITE_ONLY, mse_values.nbytes)
 
@@ -407,26 +429,27 @@ class OpenCLBackend:
         local_size = max(1, local_size)
         if local_size & (local_size - 1):
             local_size = 1 << (local_size.bit_length() - 1)
-        angle_step = np.float32(np.deg2rad(config.sample_angle_range_deg) / config.sample_count)
 
-        self.program.center_search_reduce(
+        search_event = self.program.center_search_reduce(
             self.queue,
             (local_size, alpha.shape[0]),
             (local_size, 1),
             sinogram_buffer,
             alpha_buffer,
             beta_buffer,
-            theta0_buffer,
+            tan_theta0_buffer,
+            tan_dtheta_buffer,
             mse_buffer,
             np.float32(cb_params.sdd),
             np.int32(cb_params.detector_width),
             np.int32(cb_params.detector_height),
             np.float32(cb_params.pixel_size),
             np.int32(config.sample_count),
-            angle_step,
         )
         cl.enqueue_copy(self.queue, mse_values, mse_buffer).wait()
-        return SearchArtifacts(mse_values=mse_values, x0=x0, y0=y0)
+        search_event.wait()
+        kernel_ms = (search_event.profile.end - search_event.profile.start) / 1.0e6
+        return SearchArtifacts(mse_values=mse_values, x0=x0, y0=y0, kernel_ms=kernel_ms)
 
     def resample(
         self,
@@ -627,6 +650,7 @@ class CppBackend:
                     alpha=float(handle["alpha"][()]),
                     beta=float(handle["beta"][()]),
                     mse=float(handle["MSE"][()]),
+                    kernel_ms=float(handle["kernel_ms"][()]) if "kernel_ms" in handle else None,
                 )
 
     def resample_from_file(

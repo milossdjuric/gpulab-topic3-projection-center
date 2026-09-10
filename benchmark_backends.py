@@ -172,7 +172,9 @@ def fmt_pose(pose):
     alpha_deg = math.degrees(pose["alpha"])
     beta_deg = math.degrees(pose["beta"])
     mse = pose.get("MSE", pose.get("mse"))
-    return f"xshift={xshift_mm:+.3f}mm  alpha={alpha_deg:+.3f}deg  beta={beta_deg:+.3f}deg  MSE={mse:.6e}"
+    kernel_ms = pose.get("kernel_ms")
+    kernel_str = f"  kernel={kernel_ms:.2f}ms" if kernel_ms is not None else ""
+    return f"xshift={xshift_mm:+.3f}mm  alpha={alpha_deg:+.3f}deg  beta={beta_deg:+.3f}deg  MSE={mse:.6e}{kernel_str}"
 
 
 def main():

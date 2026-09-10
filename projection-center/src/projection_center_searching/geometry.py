@@ -97,8 +97,15 @@ def compute_forward_geometry(
 
     x_p = r00 * x0 + r10 * y0 - r20 * sdd
     z_p = r02 * x0 + r12 * y0 - r22 * sdd
-    theta0 = np.arctan2(x_p, z_p)
-    return x0, y0, theta0
+    # theta0 (the forward-projected ray angle) is only ever used downstream
+    # as tan(theta0 +/- dtheta) via the tangent addition formula, never as
+    # an angle on its own -- so skip computing it as an angle at all.
+    # tan(arctan2(x_p, z_p)) == x_p / z_p exactly (tan has period pi, and
+    # arctan2 vs atan(x_p/z_p) differ by exactly pi when z_p < 0), so this
+    # is not an approximation. Ported from forward_search.cpp's identical
+    # optimization (see OPTIMIZATIONS.md).
+    tan_theta0 = x_p / z_p
+    return x0, y0, tan_theta0
 
 
 def compute_resample_geometry(
