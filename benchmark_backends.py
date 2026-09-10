@@ -207,7 +207,7 @@ def main():
             print("  RUNNING.md Limitations. Continuing with the other backends.")
             rows.append(("reference (FAILED, see above)", None, None))
 
-    for backend in ("opencl", "cpu", "cpp"):
+    for backend in ("opencl", "cpu", "cpp", "hybrid"):
         d = os.path.join(out_root, backend)
         os.makedirs(d, exist_ok=True)
         elapsed, _, pose = run_backend_pipeline(backend, data_path, d)

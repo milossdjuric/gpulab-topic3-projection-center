@@ -26,3 +26,11 @@ executable('forward_search',
 executable('forward_search_resample',
   ['src/resample_main.cpp', 'src/resample.cpp'],
   dependencies: [opencl, hdf5, boost, boost_json])
+
+# Single-process search + resample: loads the HDF5 data once and passes the
+# pose in memory instead of through the two binaries above and a JSON file
+# in between. See src/pipeline_main.cpp's own comment for what this does
+# and does not eliminate.
+executable('forward_search_pipeline',
+  ['src/pipeline_main.cpp', 'src/forward_search.cpp', 'src/resample.cpp'],
+  dependencies: [opencl, hdf5, boost])

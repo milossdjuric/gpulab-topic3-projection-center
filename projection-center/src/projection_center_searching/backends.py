@@ -591,6 +591,13 @@ def _cpp_resample_kernel_path() -> Path:
     return _repo_root() / "forward_search" / "kernels" / "resample.cl"
 
 
+def _cpp_pipeline_binary_path() -> Path:
+    override = os.environ.get("FORWARD_SEARCH_CPP_PIPELINE_BINARY")
+    if override:
+        return Path(override)
+    return _repo_root() / "forward_search" / "builddir" / _exe_name("forward_search_pipeline")
+
+
 class CppBackend:
     """Delegates both forward search and resampling to this repo's own
     C++/OpenCL implementation (forward_search/builddir/forward_search and
@@ -678,6 +685,90 @@ class CppBackend:
         ]
         _run_cpp_quietly(cmd)
 
+    def pipeline_from_file(
+        self,
+        data_path: str | Path,
+        output_data_path: str | Path,
+        search_config: SearchConfig,
+        resample_config: ResampleConfig,
+    ) -> SearchResult:
+        # Single process: forward_search_pipeline loads the data once and
+        # hands the pose to resample in memory, instead of the two separate
+        # binary invocations search_from_file()+resample_from_file() use,
+        # which round-trip the pose through a JSON file and each pay their
+        # own process/HDF5-load/kernel-compile cost. See
+        # forward_search/src/pipeline_main.cpp and OPTIMIZATIONS.md.
+        if search_config.sample_count != 1000 or search_config.sample_angle_range_deg != 30.0:
+            raise ValueError(
+                "cpp backend hardcodes sample_count=1000 and sample_angle_range_deg=30.0 "
+                "(forward_search.cpp's N_THETA/RANGE_DEG); it doesn't expose these via its "
+                "CLI. Use --backend opencl or --backend cpu to vary them."
+            )
+        binary = _cpp_pipeline_binary_path()
+        if not binary.exists():
+            raise RuntimeError(
+                f"cpp pipeline binary not found at {binary}. Build it first: "
+                "cd forward_search && meson setup builddir && meson compile -C builddir "
+                "(or set FORWARD_SEARCH_CPP_PIPELINE_BINARY to point elsewhere)."
+            )
+
+        import h5py  # local import: only this backend needs it, others are pure numpy/pyopencl
+
+        with tempfile.TemporaryDirectory() as tmp:
+            pose_h5 = Path(tmp) / "cpp_pipeline_pose.h5"
+            cmd = [
+                str(binary),
+                "--data", str(data_path),
+                "--mode", self.mode,
+                "--search-kernel", str(_cpp_kernel_path()),
+                "--resample-kernel", str(_cpp_resample_kernel_path()),
+                "--xshift", str(search_config.xshift_range_mm),
+                "--alpha", str(search_config.alpha_range_deg),
+                "--beta", str(search_config.beta_range_deg),
+                "--xshift-step", str(search_config.xshift_step_mm),
+                "--alpha-step", str(search_config.alpha_step_deg),
+                "--beta-step", str(search_config.beta_step_deg),
+                "--downsample", str(resample_config.downsample_factor),
+                "--batch-size", str(resample_config.batch_size),
+                "--output-pose", str(pose_h5),
+                "--output-data", str(output_data_path),
+            ]
+            _run_cpp_quietly(cmd)
+
+            with h5py.File(pose_h5, "r") as handle:
+                return SearchResult(
+                    center_point=(float(handle["center_point"][0]), float(handle["center_point"][1])),
+                    xshift=float(handle["xshift"][()]),
+                    alpha=float(handle["alpha"][()]),
+                    beta=float(handle["beta"][()]),
+                    mse=float(handle["MSE"][()]),
+                    kernel_ms=float(handle["kernel_ms"][()]) if "kernel_ms" in handle else None,
+                )
+
+
+class HybridBackend:
+    """Search via forward_search/'s cpp binary (CppBackend), resample via
+    this package's own opencl kernel (OpenCLBackend) -- a fourth backend
+    choice, not a blend of the other two's code. Motivated by the kernel_ms
+    comparison in OPTIMIZATIONS.md: which of cpp's or opencl's *search*
+    kernel is faster is dataset-dependent, and this package's own opencl
+    resample already has its buffer/kernel caching optimization (see
+    OPTIMIZATIONS.md), so this combination lets each stage use whichever
+    implementation makes sense, instead of forcing one backend for both.
+    """
+
+    name = "hybrid"
+
+    def __init__(self, platform_index: int | None = None, device_index: int | None = None, mode: str = "buffer") -> None:
+        self._cpp = CppBackend(mode=mode)
+        self._opencl = OpenCLBackend(platform_index=platform_index, device_index=device_index)
+
+    def search_from_file(self, data_path: str | Path, config: SearchConfig) -> SearchResult:
+        return self._cpp.search_from_file(data_path, config)
+
+    def resample(self, **kwargs):
+        return self._opencl.resample(**kwargs)
+
 
 def get_backend(
     backend_name: str,
@@ -691,6 +782,8 @@ def get_backend(
         return OpenCLBackend(platform_index=platform_index, device_index=device_index)
     if backend_name == "cpp":
         return CppBackend(mode=cpp_mode)
+    if backend_name == "hybrid":
+        return HybridBackend(platform_index=platform_index, device_index=device_index, mode=cpp_mode)
     raise ValueError(f"Unsupported backend: {backend_name}")
 
 

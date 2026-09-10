@@ -49,10 +49,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _add_common_runtime_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
-        "--backend", choices=("opencl", "cpu", "cpp"), default="opencl",
+        "--backend", choices=("opencl", "cpu", "cpp", "hybrid"), default="opencl",
         help="Execution backend. 'cpp' delegates both search and resample to this repo's "
              "C++/OpenCL forward_search/ implementation (forward_search / "
-             "forward_search_resample binaries) instead of this package's own kernels.",
+             "forward_search_resample binaries) instead of this package's own kernels. "
+             "'hybrid' uses forward_search/'s cpp search (search_from_file()) with this "
+             "package's own opencl resample kernel, not forward_search/'s resample binary.",
     )
     parser.add_argument("--platform-index", type=int, default=None, help="OpenCL platform index (opencl backend only).")
     parser.add_argument("--device-index", type=int, default=None, help="OpenCL device index (opencl backend only).")
