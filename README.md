@@ -188,9 +188,14 @@ projection-center search --backend cpu    --data data/projs_change.hdf5   # proj
 projection-center search --backend cpp    --data data/projs_change.hdf5   # this repo's forward_search/, via subprocess
 ```
 
-`--backend cpp` only implements search (not resample/pipeline's resample
-stage) — `forward_search/` has no resampling implementation, on purpose.
-Full flag reference, including `cpp`-only flags, in `projection-center/README.md`.
+`--backend cpp` supports the full pipeline (search **and** resample) —
+`forward_search/` has its own `forward_search_resample` binary, and
+`CppBackend.resample_from_file()` shells out to it the same way
+`search_from_file()` does for search. Verified end-to-end against the real
+dataset (2026-09-07): all three backends converge on the same winning pose
+and agree on the resampled output to within float32 noise (~1e-6 mean
+absolute difference). Full flag reference, including `cpp`-only flags, in
+`projection-center/README.md`.
 
 ## Output Files
 
@@ -260,9 +265,10 @@ Recommended checks:
 - `forward_search/`'s `--mode image` kernel variant crashes on this dev
   machine's Intel iGPU driver (a driver bug, not a code bug) — untestable
   here; `--mode buffer` (the default via the CLI) is unaffected.
-- `--backend cpp` only implements search; use `opencl`/`cpu` for resample
-  or pipeline, and it doesn't support `--platform-index`/`--device-index`
-  or non-default `--sample-count`/`--sample-angle-range`.
+- `--backend cpp` supports search, resample, and pipeline (verified
+  2026-09-07), but doesn't support `--platform-index`/`--device-index` or
+  non-default `--sample-count`/`--sample-angle-range` (`forward_search/`'s
+  CLI hardcodes these).
 - On the small `proj_shepplogan128.hdf5` dataset, the found `xshift` is
   weakly determined — a documented limitation of the algorithm itself, not
   either implementation. See `docs/ARCHITECTURE.md` §12.

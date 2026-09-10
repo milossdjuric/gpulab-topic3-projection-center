@@ -246,9 +246,12 @@ package's kernels:
 projection-center search --backend cpp --data data/projs_change.hdf5 --output-pose real_cb_pose.json
 ```
 
-`--backend cpp` only implements search, not resample (`forward_search/` has
-no resampling implementation, on purpose — resampling stays exclusively
-this package's). It also has one extra flag, `--cpp-mode {image,buffer}`
+`--backend cpp` supports search, resample, and pipeline — `forward_search/`
+has its own `forward_search_resample` binary, and `CppBackend` shells out to
+it via `resample_from_file()` the same way it does for search. Verified
+end-to-end against the real dataset (2026-09-07): all three backends
+converge on the same winning pose and agree on the resampled output to
+within float32 noise. It also has one extra flag, `--cpp-mode {image,buffer}`
 (forwarding to `forward_search/`'s own `--mode`, default `buffer`), and
 doesn't support `--platform-index`/`--device-index` or non-default
 `--sample-count`/`--sample-angle-range` (see "Limitations").
@@ -350,8 +353,7 @@ Recommended checks after installation:
 - This repository does not vendor GPU drivers or OpenCL runtimes.
 - macOS OpenCL support is deprecated by Apple and may fall back to CPU-only workflows in practice.
 - Runtime performance depends heavily on the installed OpenCL implementation and device memory.
-- `--backend cpp` only implements search; use `opencl`/`cpu` for resample or pipeline.
-- `--backend cpp` doesn't support `--platform-index`/`--device-index` (always uses the first GPU found) or non-default `--sample-count`/`--sample-angle-range` (`forward_search.cpp` hardcodes these).
+- `--backend cpp` supports search, resample, and pipeline (verified end-to-end against the real dataset, 2026-09-07), but doesn't support `--platform-index`/`--device-index` (always uses the first GPU found) or non-default `--sample-count`/`--sample-angle-range` (`forward_search.cpp` hardcodes these).
 - On the small `proj_shepplogan128.hdf5` dataset, the found `xshift` is weakly determined (a documented limitation of the algorithm itself, not this implementation) — see `docs/ARCHITECTURE.md` §12.
 
 ## Fixes Applied In This Copy
