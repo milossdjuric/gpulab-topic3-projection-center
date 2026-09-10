@@ -74,7 +74,11 @@ CbPose computeCOR(const CbPara& para,
     std::cerr << "Device: " << dev.getInfo<CL_DEVICE_NAME>() << "\n";
     logStage("device picked");
     cl::Context ctx({dev});
-    cl::CommandQueue queue(ctx, dev);
+    // CL_QUEUE_PROFILING_ENABLE: lets us read device-side kernel start/end
+    // timestamps (see the enqueueNDRangeKernel(k_search, ...) call below),
+    // instead of only the host-side wall-clock stage timing logStage()
+    // already provides.
+    cl::CommandQueue queue(ctx, dev, CL_QUEUE_PROFILING_ENABLE);
     logStage("context+queue created");
 
     // --- Sinogram: Image2D (hardware sampler) or plain Buffer (manual bilinear) ---
@@ -112,9 +116,22 @@ CbPose computeCOR(const CbPara& para,
     int nb = (int)beta_arr.size();
     int P  = nx * na * nb;
 
-    std::vector<float> nearest_theta(N_THETA);
-    for (int i = 0; i < N_THETA; ++i)
-        nearest_theta[i] = static_cast<float>(i * RANGE_DEG / N_THETA / 180.0 * M_PI);
+    // OPTIMIZATION (2026-09-06): the kernel never actually needs the raw
+    // dtheta angle -- it only ever computes tan(theta_0 +/- dtheta), and
+    // theta_0 itself is only ever used the same way (see forward_search.cl).
+    // So instead of shipping angles and calling tan() ~71M times inside the
+    // per-combo hot loop (2 * 1000 samples * 35,721 combos), precompute
+    // tan(dtheta) once here on the host (1000 calls total, off the hot path)
+    // and have the kernel derive tan(theta_0 +/- dtheta) via the tangent
+    // addition/subtraction formula from tan(theta_0) alone -- which itself
+    // is just x_p/z_p (tan(atan(x)) == x), eliminating the atan() call too.
+    // See docs/ALGORITHMS.md section 1.1 step 4 and docs/ARCHITECTURE.md
+    // section 4.3 for the analysis this implements.
+    std::vector<float> tan_dtheta(N_THETA);
+    for (int i = 0; i < N_THETA; ++i) {
+        double dtheta = i * RANGE_DEG / N_THETA / 180.0 * M_PI;
+        tan_dtheta[i] = static_cast<float>(std::tan(dtheta));
+    }
 
     std::cerr << "Grid: " << nx << "x" << na << "x" << nb << " = " << P << " combos\n";
 
@@ -125,8 +142,8 @@ CbPose computeCOR(const CbPara& para,
                          na * sizeof(float), alpha_arr.data());
     cl::Buffer buf_beta(ctx, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
                         nb * sizeof(float), beta_arr.data());
-    cl::Buffer buf_theta(ctx, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
-                         N_THETA * sizeof(float), nearest_theta.data());
+    cl::Buffer buf_tan_dtheta(ctx, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
+                             N_THETA * sizeof(float), tan_dtheta.data());
 
     cl::Buffer buf_sin_alpha(ctx, CL_MEM_READ_WRITE, na * sizeof(float));
     cl::Buffer buf_cos_alpha(ctx, CL_MEM_READ_WRITE, na * sizeof(float));
@@ -189,7 +206,7 @@ CbPose computeCOR(const CbPara& para,
     k_search.setArg(3,  buf_cos_alpha);
     k_search.setArg(4,  buf_sin_beta);
     k_search.setArg(5,  buf_cos_beta);
-    k_search.setArg(6,  buf_theta);
+    k_search.setArg(6,  buf_tan_dtheta);
     k_search.setArg(7,  buf_mse);
     k_search.setArg(8,  buf_x0);
     k_search.setArg(9,  buf_y0);
@@ -204,13 +221,23 @@ CbPose computeCOR(const CbPara& para,
     k_search.setArg(18, cl::Local(WG_SIZE * sizeof(float)));
     k_search.setArg(19, cl::Local(WG_SIZE * sizeof(int)));
 
+    cl::Event search_event;
     queue.enqueueNDRangeKernel(k_search,
                                cl::NullRange,
                                cl::NDRange(P, WG_SIZE),
-                               cl::NDRange(1, WG_SIZE));
+                               cl::NDRange(1, WG_SIZE),
+                               nullptr, &search_event);
     queue.finish();
     std::cerr << "Forward search done\n";
     logStage("search kernel done");
+
+    // Device-side kernel time (see CbPose::kernel_ms) -- deliberately not a
+    // host-side elapsed-since-enqueue measurement, since that would include
+    // driver dispatch/queueing latency on top of actual device execution.
+    cl_ulong t_start = search_event.getProfilingInfo<CL_PROFILING_COMMAND_START>();
+    cl_ulong t_end   = search_event.getProfilingInfo<CL_PROFILING_COMMAND_END>();
+    double kernel_ms = (t_end - t_start) / 1.0e6;
+    std::cerr << "Search kernel device time: " << kernel_ms << " ms\n";
 
     // --- Read back results ---
     std::vector<float> h_mse(P), h_x0(P), h_y0(P);
@@ -234,6 +261,7 @@ CbPose computeCOR(const CbPara& para,
     pose.beta     = beta_arr[i_beta];
     pose.center_x = h_x0[best];
     pose.center_y = h_y0[best];
+    pose.kernel_ms = kernel_ms;
 
     return pose;
 }

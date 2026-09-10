@@ -65,7 +65,7 @@ __kernel void forward_search_mse(
     __global const float*   cos_alpha,
     __global const float*   sin_beta,
     __global const float*   cos_beta,
-    __global const float*   nearest_theta,
+    __global const float*   tan_dtheta,
     __global       float*   mse_out,
     __global       float*   x0_out,
     __global       float*   y0_out,
@@ -106,10 +106,13 @@ __kernel void forward_search_mse(
         y_0 = (inv10 * b0 + inv11 * b1) / det_A;
     }
 
-    // Compute theta_0 = atan(x_p / z_p)
-    float x_p    = cos_a * x_0 + sin_a * cos_b * y_0 - sin_a * sin_b * SDD;
-    float z_p    = -sin_b * y_0 - cos_b * SDD;
-    float theta_0 = atan(x_p / z_p);
+    // OPTIMIZATION (2026-09-06): theta_0 itself (as an angle) is never used
+    // below -- only tan(theta_0 +/- dtheta) is. Since tan(atan(x)) == x, we
+    // can skip atan() entirely and use tan_theta0 = x_p/z_p directly. See
+    // docs/ALGORITHMS.md section 1.1 step 4 for the full derivation.
+    float x_p       = cos_a * x_0 + sin_a * cos_b * y_0 - sin_a * sin_b * SDD;
+    float z_p       = -sin_b * y_0 - cos_b * SDD;
+    float tan_theta0 = x_p / z_p;
 
     float hw = (detector_width  - 1) * 0.5f;
     float hh = (detector_height - 1) * 0.5f;
@@ -124,12 +127,14 @@ __kernel void forward_search_mse(
     float partial_sum = 0.0f;
     int partial_count = 0;
     for (int i = local_id; i < N; i += wg_size) {
-        float nt     = nearest_theta[i];
-        float theta  =  nt + theta_0;
-        float rtheta = -nt + theta_0;
-
-        float tan_t  = tan(theta);
-        float tan_rt = tan(rtheta);
+        // tan(theta_0 + dtheta) and tan(theta_0 - dtheta) via the tangent
+        // addition/subtraction formula, instead of two tan() calls per
+        // sample (previously ~71M tan() calls total: 2 * 1000 * 35,721
+        // combos). td = tan(dtheta) is precomputed once on the host, off
+        // the hot path (see forward_search.cpp).
+        float td     = tan_dtheta[i];
+        float tan_t  = (tan_theta0 + td) / (1.0f - tan_theta0 * td);
+        float tan_rt = (tan_theta0 - td) / (1.0f + tan_theta0 * td);
 
         float denom  = tan_t  * sin_a * sin_b + cos_b;
         float rdenom = tan_rt * sin_a * sin_b + cos_b;
@@ -194,7 +199,7 @@ __kernel void forward_search_mse_buffer(
     __global const float*   cos_alpha,
     __global const float*   sin_beta,
     __global const float*   cos_beta,
-    __global const float*   nearest_theta,
+    __global const float*   tan_dtheta,
     __global       float*   mse_out,
     __global       float*   x0_out,
     __global       float*   y0_out,
@@ -233,9 +238,12 @@ __kernel void forward_search_mse_buffer(
         y_0 = (inv10 * b0 + inv11 * b1) / det_A;
     }
 
-    float x_p    = cos_a * x_0 + sin_a * cos_b * y_0 - sin_a * sin_b * SDD;
-    float z_p    = -sin_b * y_0 - cos_b * SDD;
-    float theta_0 = atan(x_p / z_p);
+    // OPTIMIZATION (2026-09-06): see forward_search_mse above -- theta_0 is
+    // never used as an angle, only tan(theta_0 +/- dtheta) is, so skip
+    // atan() entirely (tan(atan(x)) == x).
+    float x_p       = cos_a * x_0 + sin_a * cos_b * y_0 - sin_a * sin_b * SDD;
+    float z_p       = -sin_b * y_0 - cos_b * SDD;
+    float tan_theta0 = x_p / z_p;
 
     float hw = (detector_width  - 1) * 0.5f;
     float hh = (detector_height - 1) * 0.5f;
@@ -243,12 +251,13 @@ __kernel void forward_search_mse_buffer(
     float partial_sum = 0.0f;
     int partial_count = 0;
     for (int i = local_id; i < N; i += wg_size) {
-        float nt     = nearest_theta[i];
-        float theta  =  nt + theta_0;
-        float rtheta = -nt + theta_0;
-
-        float tan_t  = tan(theta);
-        float tan_rt = tan(rtheta);
+        // tan(theta_0 +/- dtheta) via the tangent addition/subtraction
+        // formula instead of two tan() calls per sample -- see
+        // forward_search_mse above and docs/ALGORITHMS.md section 1.1
+        // step 4.
+        float td     = tan_dtheta[i];
+        float tan_t  = (tan_theta0 + td) / (1.0f - tan_theta0 * td);
+        float tan_rt = (tan_theta0 - td) / (1.0f + tan_theta0 * td);
 
         float denom  = tan_t  * sin_a * sin_b + cos_b;
         float rdenom = tan_rt * sin_a * sin_b + cos_b;

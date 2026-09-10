@@ -61,6 +61,7 @@ static py::dict search(
     result["MSE"]      = pose.mse;
     result["center_x"] = pose.center_x;
     result["center_y"] = pose.center_y;
+    result["kernel_ms"] = pose.kernel_ms;
     return result;
 }
 
