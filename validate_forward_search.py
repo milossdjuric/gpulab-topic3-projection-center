@@ -14,7 +14,7 @@ Usage:
     # Or validate against a bug-fixed reference instead (recommended -- see
     # KNOWN REFERENCE BUG below):
     python3 validate_forward_search.py --run-ref \
-        --use-corrected-ref --data /lgrp/edu-2026-1-gpulab/projs_change.hdf5
+        --fix-ref --data /lgrp/edu-2026-1-gpulab/projs_change.hdf5
 
 KNOWN REFERENCE BUG:
     Topic_3_forwardsearching.get_linear_interpolate_MSE declares f_theta and
@@ -24,7 +24,7 @@ KNOWN REFERENCE BUG:
     this hits ~47% of rays at some grid points and biases the reference's
     MSE landscape unevenly -- confirmed (via a fine 0.1-degree sweep) to
     shift its reported optimum by as much as 1.8 degrees in beta, not merely
-    an adjacent grid bin. --use-corrected-ref runs the reference's own
+    an adjacent grid bin. --fix-ref runs the reference's own
     Compute_COR search in-process with that one function monkey-patched to
     zero-init on out-of-bounds, without ever modifying
     Topic_3_forwardsearching.py on disk, and validates against that
@@ -83,14 +83,35 @@ def run_reference(data_path, out_path, xshift, alpha, beta,
     shutil.move("real_cb_pose.json", out_path)
 
 
+MIN_SIGNAL = 0.01  # must match forward_search.cl's MIN_SIGNAL and
+                    # projection-center's KERNEL_SOURCE/_MIN_SIGNAL
+
+
 def _corrected_get_linear_interpolate_MSE(N, sino_input, SDD, detector_width,
                                           detector_height, pixel_size, alpha,
                                           beta, theta_0, nearest_theta):
     """Drop-in replacement for Topic_3_forwardsearching.get_linear_interpolate_MSE
-    with f_theta/f_rtheta zero-initialized per ray, instead of carrying
-    forward the previous ray's value on out-of-bounds. See KNOWN REFERENCE
-    BUG at the top of this file."""
+    with two fixes applied in-process only -- the file on disk is never
+    touched:
+
+    1. f_theta/f_rtheta zero-initialized per ray, instead of carrying
+       forward the previous ray's value on out-of-bounds. See KNOWN
+       REFERENCE BUG at the top of this file.
+    2. Off-detector and background-only (MIN_SIGNAL) sample pairs are
+       excluded from the MSE, matching the same fix already applied to the
+       GPU kernels (see forward_search.cl's MIN_SIGNAL and
+       docs/ARCHITECTURE.md section 12). The caller
+       (find_conebeam_COR_line_forward) always divides the returned array
+       by the fixed N, so excluded pairs are returned as 0 and included
+       pairs are pre-scaled by N/valid_count -- that makes the caller's
+       unmodified `pixel_MSE.sum(axis=0) / N` come out exactly equal to
+       sum_of_included_squared_diffs / valid_count, the same formula the
+       GPU kernels use, without needing to patch the caller too. A combo
+       with zero valid pairs gets +inf (worst possible), mirroring the GPU
+       kernels' FLT_MAX -- not 0, which would make "exclude every ray"
+       look like a perfect match."""
     pixel_MSE = np.zeros((N,), dtype=np.float64)
+    valid_count = 0
     for idx in range(nearest_theta.shape[0]):
         theta = nearest_theta[idx] + theta_0
         reflect_theta = -nearest_theta[idx] + theta_0
@@ -115,16 +136,19 @@ def _corrected_get_linear_interpolate_MSE(N, sino_input, SDD, detector_width,
         x = x / pixel_size + (detector_width - 1) / 2
         rx = rx / pixel_size + (detector_width - 1) / 2
 
+        valid_t  = 0 <= x  < detector_width - 1 and 0 <= y  < detector_height - 1
+        valid_rt = 0 <= rx < detector_width - 1 and 0 <= ry < detector_height - 1
+
         f_theta = 0.0
         f_rtheta = 0.0
-        if 0 <= x < detector_width - 1 and 0 <= y < detector_height - 1:
+        if valid_t:
             idx_x = int(x)
             idx_y = int(y)
             dx = x - idx_x
             dy = y - idx_y
             f_theta = (1 - dx) * ((1 - dy) * sino_input[idx_y][idx_x] + dy * sino_input[idx_y + 1][idx_x]) \
                     +       dx  * ((1 - dy) * sino_input[idx_y][idx_x + 1] + dy * sino_input[idx_y + 1][idx_x + 1])
-        if 0 <= rx < detector_width - 1 and 0 <= ry < detector_height - 1:
+        if valid_rt:
             idx_x = int(rx)
             idx_y = int(ry)
             dx = rx - idx_x
@@ -132,8 +156,36 @@ def _corrected_get_linear_interpolate_MSE(N, sino_input, SDD, detector_width,
             f_rtheta = (1 - dx) * ((1 - dy) * sino_input[idx_y][idx_x] + dy * sino_input[idx_y + 1][idx_x]) \
                      +       dx  * ((1 - dy) * sino_input[idx_y][idx_x + 1] + dy * sino_input[idx_y + 1][idx_x + 1])
 
-        pixel_MSE[idx] = (f_theta - f_rtheta) ** 2
+        if valid_t and valid_rt and (f_theta >= MIN_SIGNAL or f_rtheta >= MIN_SIGNAL):
+            pixel_MSE[idx] = (f_theta - f_rtheta) ** 2
+            valid_count += 1
+
+    if valid_count > 0:
+        pixel_MSE *= (N / valid_count)
+    else:
+        pixel_MSE[:] = math.inf
     return pixel_MSE
+
+
+def _load_cb_para(f, projs):
+    """Builds the reference's cb_para dict. detector_width/detector_height
+    are derived from Projection's real array shape (matching
+    projection-center's own hdf5_io.py), not trusted from the file's
+    detector_width/detector_height scalars: some dataset files store those
+    two swapped relative to the actual array."""
+    num_projs, height, width = projs.shape
+    return {
+        "num_projs": num_projs,
+        "SDD": f["SDD"][()],
+        "SOD": f["SOD"][()],
+        "pixel_size": f["pixelSize"][()],
+        "voxelSize": f["voxelSize"][()],
+        "Volumen_num_xz": int(f["Volumen_num_xz"][()]),
+        "Volumen_num_y": int(f["Volumen_num_y"][()]),
+        "detector_width": width,
+        "detector_height": height,
+        "angles": f["Angle"][()],
+    }
 
 
 def run_corrected_reference(data_path, out_path, xshift, alpha, beta,
@@ -150,19 +202,8 @@ def run_corrected_reference(data_path, out_path, xshift, alpha, beta,
     ref_mod.get_linear_interpolate_MSE = _corrected_get_linear_interpolate_MSE
     try:
         with h5py.File(data_path, "r") as f:
-            cb_para = {
-                "num_projs": int(f["num_projs"][()]),
-                "SDD": f["SDD"][()],
-                "SOD": f["SOD"][()],
-                "pixel_size": f["pixelSize"][()],
-                "voxelSize": f["voxelSize"][()],
-                "Volumen_num_xz": int(f["Volumen_num_xz"][()]),
-                "Volumen_num_y": int(f["Volumen_num_y"][()]),
-                "detector_width": int(f["detector_width"][()]),
-                "detector_height": int(f["detector_height"][()]),
-                "angles": f["Angle"][()],
-            }
             projs = f["Projection"][()][:]
+            cb_para = _load_cb_para(f, projs)
 
         class _Args:
             pass
@@ -193,14 +234,32 @@ def fmt_mm(m):
     return f"{m * 1000:.6f} mm"
 
 
-def compare(gpu, ref, xshift_step_m=None, alpha_step_rad=None, beta_step_rad=None,
-           ref_is_corrected=False):
+def _mirrored_pose(ref):
+    # Negating both alpha and beta simultaneously leaves xshift, center_x,
+    # MSE, and theta_0 exactly unchanged (the sin_a*sin_b product in the
+    # geometry math is invariant under a double sign flip), and flips only
+    # center_y's sign. On a dataset whose sinogram is close to vertically
+    # symmetric, this makes (alpha, beta) and (-alpha, -beta) two genuinely
+    # near-equally-valid solutions, not a real mismatch -- confirmed on
+    # data/proj_shepplogan512.hdf5, where the reference and the GPU
+    # backends landed on exactly this mirrored pair.
+    cx, cy = ref["center_point"]
+    return {
+        "xshift": ref["xshift"],
+        "alpha": -ref["alpha"],
+        "beta": -ref["beta"],
+        "MSE": ref["MSE"],
+        "center_point": [cx, -cy],
+    }
+
+
+def _evaluate(gpu, ref, xshift_step_m, alpha_step_rad, beta_step_rad):
     # Grid-step tolerance: absorbs float32-vs-float64 / native_trig noise, which
     # can occasionally tip the argmin by one bin even when both implementations
     # agree. It does NOT reliably absorb the reference's out-of-bounds bug (see
     # KNOWN REFERENCE BUG at the top of this file) -- that bug's effect on the
     # argmin is landscape-dependent and confirmed to reach 1.8 degrees in beta
-    # on this dataset, well beyond one grid step. Use --use-corrected-ref for a
+    # on this dataset, well beyond one grid step. Use --fix-ref for a
     # rigorous check that isn't relying on this tolerance to paper over it.
     passed = True
     adjacent_bin_notes = []
@@ -264,11 +323,30 @@ def compare(gpu, ref, xshift_step_m=None, alpha_step_rad=None, beta_step_rad=Non
     rows.append(("center_y (ref)", f"{cy_ref:.8f}"))
     rows.append(("center_y match", "OK" if cy_ok else f"diff={abs(cy_gpu-cy_ref):.2e}{'  (expected: adjacent bin)' if adjacent_bin_notes else ''}"))
 
+    return passed, rows, adjacent_bin_notes
+
+
+def compare(gpu, ref, xshift_step_m=None, alpha_step_rad=None, beta_step_rad=None,
+           ref_is_corrected=False):
+    passed, rows, adjacent_bin_notes = _evaluate(gpu, ref, xshift_step_m, alpha_step_rad, beta_step_rad)
+
+    used_mirror = False
+    if not passed:
+        mirror_passed, mirror_rows, mirror_notes = _evaluate(
+            gpu, _mirrored_pose(ref), xshift_step_m, alpha_step_rad, beta_step_rad)
+        if mirror_passed:
+            passed, rows, adjacent_bin_notes = mirror_passed, mirror_rows, mirror_notes
+            used_mirror = True
+
     # Print table
     col = max(len(r[0]) for r in rows) + 2
     print()
     print("=" * 60)
     print("  VALIDATION RESULTS")
+    if used_mirror:
+        print("  (matched the reference's mirrored pose: alpha, beta, and center_y")
+        print("  negated -- a known sign-flip symmetry in the geometry model, not")
+        print("  a real mismatch. See the comment on _mirrored_pose().)")
     print("=" * 60)
     for label, value in rows:
         if label == "":
@@ -279,7 +357,7 @@ def compare(gpu, ref, xshift_step_m=None, alpha_step_rad=None, beta_step_rad=Non
     print(f"  OVERALL: {'PASS' if passed else 'FAIL'}")
     if ref_is_corrected:
         print()
-        print(f"  Reference run with --use-corrected-ref: get_linear_interpolate_MSE's")
+        print(f"  Reference run with --fix-ref: get_linear_interpolate_MSE's")
         print(f"  out-of-bounds handling was patched in-process (zero-init instead of")
         print(f"  stale carry-over) before running the search. This is the rigorous")
         print(f"  check -- a mismatch here is a real GPU-side issue, not the known")
@@ -290,7 +368,7 @@ def compare(gpu, ref, xshift_step_m=None, alpha_step_rad=None, beta_step_rad=Non
         print(f"  unmodified reference. This MAY be the reference's known out-of-bounds bug")
         print(f"  (see KNOWN REFERENCE BUG at the top of this file) tipping its argmin by one")
         print(f"  step, or it may be genuine float32-vs-float64 noise -- a coarse grid can't")
-        print(f"  tell these apart. Re-run with --use-corrected-ref for a rigorous check that")
+        print(f"  tell these apart. Re-run with --fix-ref for a rigorous check that")
         print(f"  doesn't depend on this tolerance.")
     print("=" * 60)
     print()
@@ -302,7 +380,7 @@ def main():
     ap.add_argument("--gpu",  default="runs/real_cb_pose.h5",  help="GPU output HDF5")
     ap.add_argument("--ref",  default="runs/ref_cb_pose.json",   help="Reference JSON")
     ap.add_argument("--run-ref", action="store_true",        help="Run Python reference first")
-    ap.add_argument("--use-corrected-ref", action="store_true",
+    ap.add_argument("--fix-ref", action="store_true",
                     help="With --run-ref, run the reference in-process with its "
                          "out-of-bounds bug patched (zero-init instead of stale "
                          "carry-over) instead of the unmodified script as a subprocess. "
@@ -317,7 +395,7 @@ def main():
     args = ap.parse_args()
 
     if args.run_ref:
-        if args.use_corrected_ref:
+        if args.fix_ref:
             run_corrected_reference(args.data, args.ref,
                                     args.xshift, args.alpha, args.beta,
                                     args.xshift_step, args.alpha_step, args.beta_step)
@@ -330,7 +408,7 @@ def main():
     ref = load(args.ref)
     # A ref JSON produced by run_corrected_reference is self-tagged, so a
     # compare-only invocation (no --run-ref) still gets the right label.
-    ref_is_corrected = args.use_corrected_ref or bool(ref.get("_corrected_reference", False))
+    ref_is_corrected = args.fix_ref or bool(ref.get("_corrected_reference", False))
 
     ok = compare(
         gpu, ref,
