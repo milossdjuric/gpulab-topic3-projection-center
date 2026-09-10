@@ -32,14 +32,22 @@ static CbPara loadHDF5(const std::string& path, std::vector<float>& projs) {
         return static_cast<int>(v);
     };
 
+    H5::DataSet p_ds = file.openDataSet("Projection");
+    hsize_t dims[3];
+    p_ds.getSpace().getSimpleExtentDims(dims);
+
     CbPara p;
     p.SDD             = readDouble("SDD");
     p.SOD             = readDouble("SOD");
     p.pixel_size      = readDouble("pixelSize");
     p.voxel_size      = readDouble("voxelSize");
     p.num_projs       = readInt("num_projs");
-    p.detector_width  = readInt("detector_width");
-    p.detector_height = readInt("detector_height");
+    // Derived from Projection's real shape (num_projs, height, width), not
+    // trusted from the file's detector_width/detector_height scalars:
+    // some dataset files store those two swapped relative to the actual
+    // array, which used to silently read past the real data.
+    p.detector_height = static_cast<int>(dims[1]);
+    p.detector_width  = static_cast<int>(dims[2]);
     p.volumen_num_xz  = readInt("Volumen_num_xz");
     p.volumen_num_y   = readInt("Volumen_num_y");
 
@@ -49,9 +57,6 @@ static CbPara loadHDF5(const std::string& path, std::vector<float>& projs) {
     p.angles.resize(a_dim[0]);
     a_ds.read(p.angles.data(), H5::PredType::NATIVE_DOUBLE);
 
-    H5::DataSet p_ds = file.openDataSet("Projection");
-    hsize_t dims[3];
-    p_ds.getSpace().getSimpleExtentDims(dims);
     projs.resize(dims[0] * dims[1] * dims[2]);
     p_ds.read(projs.data(), H5::PredType::NATIVE_FLOAT);
 
