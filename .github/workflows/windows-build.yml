@@ -132,6 +132,13 @@ jobs:
 
       - name: projection-center devices
         shell: pwsh
+        continue-on-error: true
+        # Confirmed on 2026-09-10 (run 34426403984): this step itself
+        # works correctly, pyopencl imports and runs fine on native
+        # Windows, it just correctly reports "No OpenCL devices found" on
+        # this runner -- an expected environment limitation, not a bug.
+        # continue-on-error so that expected result doesn't skip the
+        # pipeline step below.
         run: |
           # forward_search.exe (built with MinGW-w64) needs its MinGW
           # runtime DLLs on PATH when launched from outside the MSYS2
