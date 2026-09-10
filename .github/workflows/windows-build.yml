@@ -64,6 +64,23 @@ jobs:
           cd forward_search
           ls -la builddir/forward_search.exe builddir/forward_search_resample.exe
 
+      - name: bundle runtime DLLs for standalone testing
+        # The .exe files dynamically link MinGW's runtime plus HDF5/Boost/
+        # OpenCL DLLs (see the "cannot find -lboost_json" fix's link line),
+        # so they won't run outside an MSYS2 shell (or under Wine, or on a
+        # plain Windows machine) unless those DLLs travel with them.
+        run: |
+          cd forward_search
+          mkdir dist
+          cp builddir/forward_search.exe builddir/forward_search_resample.exe dist/
+          ldd builddir/forward_search.exe builddir/forward_search_resample.exe \
+            | grep '/mingw64/' | awk '{print $3}' | sort -u | xargs -I{} cp {} dist/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: forward_search-windows
+          path: forward_search/dist/
+
   # Second job: does the actual `projection-center` CLI (the thing
   # RUNNING.md/run_all_*.sh actually use) work end to end on Windows, not
   # just the raw forward_search/ C++ build. Uses a normal native Windows
