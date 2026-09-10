@@ -38,6 +38,17 @@ jobs:
             mingw-w64-x86_64-opencl-headers
             mingw-w64-x86_64-opencl-icd
 
+      - name: fetch CL/opencl.hpp
+        # MSYS2's mingw-w64-x86_64-opencl-headers package only ships the C
+        # API (CL/cl.h), not this separate C++ bindings header (on Debian/
+        # Ubuntu it's its own package, opencl-clhpp-headers). Fetched
+        # directly from upstream rather than vendored in-repo, since it's
+        # one file and this keeps the repo from carrying a third-party
+        # header nothing else here needs.
+        run: |
+          curl -sSL -o /mingw64/include/CL/opencl.hpp \
+            https://raw.githubusercontent.com/KhronosGroup/OpenCL-CLHPP/main/include/CL/opencl.hpp
+
       - name: meson setup
         run: |
           cd forward_search
