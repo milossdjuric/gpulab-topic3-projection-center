@@ -2,6 +2,12 @@
 #include <string>
 #include <vector>
 
+// M_PI is a POSIX/GNU <cmath> extension, not standard C++ -- available for
+// free on Linux (glibc), but not declared by MinGW/MSVC without extra
+// macros. Defined once here instead, since every caller already includes
+// this header.
+constexpr double PI = 3.14159265358979323846;
+
 struct CbPara {
     int num_projs;
     double SDD, SOD, pixel_size, voxel_size;

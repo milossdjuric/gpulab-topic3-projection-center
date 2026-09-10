@@ -42,11 +42,11 @@ static py::dict search(
 
     SearchArgs args{};
     args.xshift      = xshift      / 1000.0;
-    args.alpha       = alpha       / 180.0 * M_PI;
-    args.beta         = beta        / 180.0 * M_PI;
+    args.alpha       = alpha       / 180.0 * PI;
+    args.beta         = beta        / 180.0 * PI;
     args.xshift_step = xshift_step / 1000.0;
-    args.alpha_step  = alpha_step  / 180.0 * M_PI;
-    args.beta_step   = beta_step   / 180.0 * M_PI;
+    args.alpha_step  = alpha_step  / 180.0 * PI;
+    args.beta_step   = beta_step   / 180.0 * PI;
 
     std::string kernel_path = std::string(KERNEL_DIR) + "/forward_search.cl";
     // No explicit cl::Error translator needed: cl2.hpp/opencl.hpp's cl::Error

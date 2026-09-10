@@ -129,7 +129,7 @@ CbPose computeCOR(const CbPara& para,
     // section 4.3 for the analysis this implements.
     std::vector<float> tan_dtheta(N_THETA);
     for (int i = 0; i < N_THETA; ++i) {
-        double dtheta = i * RANGE_DEG / N_THETA / 180.0 * M_PI;
+        double dtheta = i * RANGE_DEG / N_THETA / 180.0 * PI;
         tan_dtheta[i] = static_cast<float>(std::tan(dtheta));
     }
 

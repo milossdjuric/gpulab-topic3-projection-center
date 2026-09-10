@@ -115,11 +115,11 @@ int main(int argc, char* argv[]) {
 
         SearchArgs args;
         args.xshift      = vm["xshift"].as<double>()      / 1000.0;
-        args.alpha       = vm["alpha"].as<double>()       / 180.0 * M_PI;
-        args.beta        = vm["beta"].as<double>()        / 180.0 * M_PI;
+        args.alpha       = vm["alpha"].as<double>()       / 180.0 * PI;
+        args.beta        = vm["beta"].as<double>()        / 180.0 * PI;
         args.xshift_step = vm["xshift-step"].as<double>() / 1000.0;
-        args.alpha_step  = vm["alpha-step"].as<double>()  / 180.0 * M_PI;
-        args.beta_step   = vm["beta-step"].as<double>()   / 180.0 * M_PI;
+        args.alpha_step  = vm["alpha-step"].as<double>()  / 180.0 * PI;
+        args.beta_step   = vm["beta-step"].as<double>()   / 180.0 * PI;
 
         CbPose pose = computeCOR(para, projs, args,
                                  vm["kernel"].as<std::string>(),
@@ -128,8 +128,8 @@ int main(int argc, char* argv[]) {
         writeHDF5(vm["output"].as<std::string>(), pose);
         std::cerr << "MSE:    " << pose.mse << "\n";
         std::cerr << "xshift: " << pose.xshift * 1000.0 << " mm\n";
-        std::cerr << "alpha:  " << pose.alpha / M_PI * 180.0 << " deg\n";
-        std::cerr << "beta:   " << pose.beta  / M_PI * 180.0 << " deg\n";
+        std::cerr << "alpha:  " << pose.alpha / PI * 180.0 << " deg\n";
+        std::cerr << "beta:   " << pose.beta  / PI * 180.0 << " deg\n";
 
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << "\n";
