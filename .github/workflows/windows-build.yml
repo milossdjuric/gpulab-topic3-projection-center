@@ -63,3 +63,76 @@ jobs:
         run: |
           cd forward_search
           ls -la builddir/forward_search.exe builddir/forward_search_resample.exe
+
+  # Second job: does the actual `projection-center` CLI (the thing
+  # RUNNING.md/run_all_*.sh actually use) work end to end on Windows, not
+  # just the raw forward_search/ C++ build. Uses a normal native Windows
+  # Python (not MSYS2's), since pyopencl's published wheels target that,
+  # not MSYS2's Python build.
+  python-cli:
+    runs-on: windows-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-meson
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-hdf5
+            mingw-w64-x86_64-boost
+            mingw-w64-x86_64-opencl-headers
+            mingw-w64-x86_64-opencl-icd
+
+      - name: fetch CL/opencl.hpp
+        shell: msys2 {0}
+        run: |
+          curl -sSL -o /mingw64/include/CL/opencl.hpp \
+            https://raw.githubusercontent.com/KhronosGroup/OpenCL-CLHPP/main/include/CL/opencl.hpp
+
+      - name: build forward_search (needed by --backend cpp)
+        shell: msys2 {0}
+        run: |
+          cd forward_search
+          meson setup builddir
+          meson compile -C builddir
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: install projection-center
+        shell: pwsh
+        run: pip install -e projection-center
+
+      - name: make synthetic dataset
+        shell: pwsh
+        run: python forward_search/tests/make_synth_hdf5.py synth.hdf5
+
+      - name: projection-center devices
+        shell: pwsh
+        run: |
+          # forward_search.exe (built with MinGW-w64) needs its MinGW
+          # runtime DLLs on PATH when launched from outside the MSYS2
+          # shell -- this exact path is what msys2/setup-msys2 actually
+          # used in the build job's own logs, not a guess.
+          $env:Path = "D:\a\_temp\msys64\mingw64\bin;" + $env:Path
+          projection-center devices
+
+      - name: projection-center pipeline --backend cpp
+        shell: pwsh
+        continue-on-error: true
+        # continue-on-error: GitHub's Windows runners don't reliably have a
+        # usable OpenCL device, so this step failing with a "no platforms
+        # found"-style error is an accepted, expected environment
+        # limitation, not a code bug -- read the log to tell those apart
+        # from a real failure (crash, wrong exception, binary not found).
+        run: |
+          $env:Path = "D:\a\_temp\msys64\mingw64\bin;" + $env:Path
+          projection-center pipeline --backend cpp --cpp-mode buffer --data synth.hdf5 `
+            --xshift 5 --alpha 5 --beta 5 --xshift-step 5 --alpha-step 5 --beta-step 5 `
+            --output-pose pose.json --output-data resampled.hdf5

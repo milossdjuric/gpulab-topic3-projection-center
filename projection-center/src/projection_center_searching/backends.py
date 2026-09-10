@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -532,11 +533,18 @@ def _run_cpp_quietly(cmd: list[str]) -> None:
         )
 
 
+def _exe_name(name: str) -> str:
+    # meson names build output <name>.exe on Windows, plain <name> everywhere
+    # else -- Path(...).exists() checking the Linux name would always be
+    # False on Windows even after a successful build.
+    return f"{name}.exe" if sys.platform.startswith("win") else name
+
+
 def _cpp_binary_path() -> Path:
     override = os.environ.get("FORWARD_SEARCH_CPP_BINARY")
     if override:
         return Path(override)
-    return _repo_root() / "forward_search" / "builddir" / "forward_search"
+    return _repo_root() / "forward_search" / "builddir" / _exe_name("forward_search")
 
 
 def _cpp_kernel_path() -> Path:
@@ -550,7 +558,7 @@ def _cpp_resample_binary_path() -> Path:
     override = os.environ.get("FORWARD_SEARCH_CPP_RESAMPLE_BINARY")
     if override:
         return Path(override)
-    return _repo_root() / "forward_search" / "builddir" / "forward_search_resample"
+    return _repo_root() / "forward_search" / "builddir" / _exe_name("forward_search_resample")
 
 
 def _cpp_resample_kernel_path() -> Path:
