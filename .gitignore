@@ -9,3 +9,6 @@ runs/
 data/
 outputs/
 .venv/
+
+# KDevelop machine-local session state (launch configs with local absolute paths)
+.kdev4/
