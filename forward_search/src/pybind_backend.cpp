@@ -1,3 +1,6 @@
+// Lets Python call the search function directly, without going through a
+// subprocess or a file. Projections come in as a NumPy array, the found
+// pose comes back as a Python dict.
 #include <pybind11/pybind11.h>
 #include <pybind11/numpy.h>
 #include "forward_search.hpp"
@@ -12,6 +15,10 @@ namespace py = pybind11;
 #error "KERNEL_DIR must be defined by the build (set in backend.py via extra_cflags)"
 #endif
 
+// The function Python actually calls. Checks the array is the right
+// shape, converts it into the plain C++ type the search function expects,
+// runs the same search every CLI binary uses, and hands the result back
+// as a dict.
 static py::dict search(
     py::array_t<float, py::array::c_style | py::array::forcecast> projections,
     double SDD, double SOD, double pixel_size,
@@ -42,11 +49,11 @@ static py::dict search(
 
     SearchArgs args{};
     args.xshift      = xshift      / 1000.0;
-    args.alpha       = alpha       / 180.0 * M_PI;
-    args.beta         = beta        / 180.0 * M_PI;
+    args.alpha       = alpha       / 180.0 * PI;
+    args.beta         = beta        / 180.0 * PI;
     args.xshift_step = xshift_step / 1000.0;
-    args.alpha_step  = alpha_step  / 180.0 * M_PI;
-    args.beta_step   = beta_step   / 180.0 * M_PI;
+    args.alpha_step  = alpha_step  / 180.0 * PI;
+    args.beta_step   = beta_step   / 180.0 * PI;
 
     std::string kernel_path = std::string(KERNEL_DIR) + "/forward_search.cl";
     // No explicit cl::Error translator needed: cl2.hpp/opencl.hpp's cl::Error
@@ -61,9 +68,12 @@ static py::dict search(
     result["MSE"]      = pose.mse;
     result["center_x"] = pose.center_x;
     result["center_y"] = pose.center_y;
+    result["kernel_ms"] = pose.kernel_ms;
     return result;
 }
 
+// Registers this module as forward_search_backend, with one function,
+// search(), so Python can import it and call it like any other package.
 PYBIND11_MODULE(forward_search_backend, m) {
     m.doc() = "OpenCL cone-beam CT forward search backend";
     m.def("search", &search,

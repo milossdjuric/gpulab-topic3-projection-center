@@ -77,6 +77,8 @@ def write_pose_json(path: str | Path, result: SearchResult) -> None:
         "beta": float(result.beta),
         "MSE": float(result.mse),
     }
+    if result.kernel_ms is not None:
+        payload["kernel_ms"] = float(result.kernel_ms)
     output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
@@ -88,6 +90,7 @@ def read_pose_json(path: str | Path) -> SearchResult:
         alpha=float(payload["alpha"]),
         beta=float(payload["beta"]),
         mse=float(payload["MSE"]),
+        kernel_ms=float(payload["kernel_ms"]) if "kernel_ms" in payload else None,
     )
 
 

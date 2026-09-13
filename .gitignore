@@ -1,4 +1,5 @@
 *.pdf
+!repo_docs/*.pdf
 docs/
 report_outline.md
 __pycache__/
@@ -9,3 +10,6 @@ runs/
 data/
 outputs/
 .venv/
+
+# KDevelop machine-local session state (launch configs with local absolute paths)
+.kdev4/

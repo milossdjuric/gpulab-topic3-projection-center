@@ -6,7 +6,8 @@ import os
 import subprocess
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+FORWARD_SEARCH_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(FORWARD_SEARCH_DIR, "src"))
 
 import h5py
 from make_synth_hdf5 import make_synth_hdf5
@@ -14,7 +15,6 @@ from backend import _backend
 
 SYNTH_PATH = "/tmp/forward_search_test_synth.hdf5"
 CLI_OUT_PATH = "/tmp/forward_search_test_cli_out.h5"
-FORWARD_SEARCH_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CLI_BIN = os.path.join(FORWARD_SEARCH_DIR, "builddir", "forward_search")
 
 ARGS = dict(xshift=5.0, alpha=2.0, beta=2.0,

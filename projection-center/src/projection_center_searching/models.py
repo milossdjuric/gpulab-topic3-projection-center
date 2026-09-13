@@ -38,6 +38,10 @@ class SearchResult:
     alpha: float
     beta: float
     mse: float
+    # Device-side search kernel execution time in milliseconds (OpenCL
+    # event profiling), not a host-side wall-clock stage timestamp. None
+    # for backends with no GPU kernel to isolate (cpu, reference).
+    kernel_ms: float | None = None
 
 
 @dataclass(slots=True)

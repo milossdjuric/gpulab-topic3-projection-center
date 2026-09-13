@@ -44,8 +44,9 @@ same shape independently, reachable here as `--backend cpp`.
 |-- data/                        (gitignored -- populate locally)
 |   |-- projs_change.hdf5
 |   `-- proj_shepplogan128.hdf5
-|-- Topic_3_forwardsearching.py  (untouched CPU reference -- repo root, not here)
-|-- Topic_3_resampling.py        (untouched CPU reference -- repo root, not here)
+|-- reference/                   (untouched CPU reference -- repo root, not here)
+|   |-- Topic_3_forwardsearching.py
+|   `-- Topic_3_resampling.py
 |-- forward_search/               (this repo's C++/OpenCL implementation -- reached via --backend cpp)
 |-- projection-center/            (this package)
 |   |-- pyproject.toml
@@ -59,7 +60,6 @@ same shape independently, reachable here as `--backend cpp`.
 |           |-- hdf5_io.py
 |           |-- models.py
 |           `-- pipeline.py
-`-- docs/ARCHITECTURE.md          (full design writeup, gitignored)
 ```
 
 ## Requirements
@@ -146,7 +146,7 @@ The source repository documented four root wrapper scripts
 (`Topic_3_forwardsearching.py`, `_cpu.py`, `Topic_3_resampling.py`,
 `_cpu.py`) as an alternative to the CLI. **They are not present here.**
 Their filenames collide with this repository's canonical, untouched CPU
-reference scripts at the repo root — those must stay byte-for-byte
+reference scripts in `reference/` — those must stay byte-for-byte
 unmodified per the course rubric, and in the source repo the same filenames
 had been overwritten with GPU-calling entrypoints instead, losing the
 original reference. Use the CLI equivalents instead:
@@ -245,9 +245,12 @@ package's kernels:
 projection-center search --backend cpp --data data/projs_change.hdf5 --output-pose real_cb_pose.json
 ```
 
-`--backend cpp` only implements search, not resample (`forward_search/` has
-no resampling implementation, on purpose — resampling stays exclusively
-this package's). It also has one extra flag, `--cpp-mode {image,buffer}`
+`--backend cpp` supports search, resample, and pipeline — `forward_search/`
+has its own `forward_search_resample` binary, and `CppBackend` shells out to
+it via `resample_from_file()` the same way it does for search. Verified
+end-to-end against the real dataset (2026-09-07): all three backends
+converge on the same winning pose and agree on the resampled output to
+within float32 noise. It also has one extra flag, `--cpp-mode {image,buffer}`
 (forwarding to `forward_search/`'s own `--mode`, default `buffer`), and
 doesn't support `--platform-index`/`--device-index` or non-default
 `--sample-count`/`--sample-angle-range` (see "Limitations").
@@ -349,9 +352,8 @@ Recommended checks after installation:
 - This repository does not vendor GPU drivers or OpenCL runtimes.
 - macOS OpenCL support is deprecated by Apple and may fall back to CPU-only workflows in practice.
 - Runtime performance depends heavily on the installed OpenCL implementation and device memory.
-- `--backend cpp` only implements search; use `opencl`/`cpu` for resample or pipeline.
-- `--backend cpp` doesn't support `--platform-index`/`--device-index` (always uses the first GPU found) or non-default `--sample-count`/`--sample-angle-range` (`forward_search.cpp` hardcodes these).
-- On the small `proj_shepplogan128.hdf5` dataset, the found `xshift` is weakly determined (a documented limitation of the algorithm itself, not this implementation) — see `docs/ARCHITECTURE.md` §12.
+- `--backend cpp` supports search, resample, and pipeline (verified end-to-end against the real dataset, 2026-09-07), but doesn't support `--platform-index`/`--device-index` (always uses the first GPU found) or non-default `--sample-count`/`--sample-angle-range` (`forward_search.cpp` hardcodes these).
+- On the small `proj_shepplogan128.hdf5` dataset, the found `xshift` is weakly determined (a documented limitation of the algorithm itself, not this implementation).
 
 ## Fixes Applied In This Copy
 
@@ -375,7 +377,10 @@ unchanged.
    normalizes by the count of valid, signal-bearing pairs instead.
    `Topic_3_forwardsearching.py` has the identical property and was not
    touched (confirmed it reproduces the same numbers).
-
-Full write-ups, including a fourth fix that was tried and deliberately
-reverted (it regressed agreement with the Python reference), are in
-`docs/ARCHITECTURE.md` §11-§12.
+4. **`--backend cpp`'s output didn't match this package's quiet style.**
+   `forward_search/`'s binaries print their own stage diagnostics (device
+   pick, sinogram build, kernel timings) straight to stderr, which used to
+   pass through unfiltered. `CppBackend` now captures that output on
+   success (matching `opencl`/`cpu`'s plain 3-line summary), but still
+   surfaces it in full if the subprocess actually fails, so nothing is
+   harder to debug than before.

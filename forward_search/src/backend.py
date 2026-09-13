@@ -2,7 +2,7 @@ import os
 from torch.utils.cpp_extension import load
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
-kernel_dir = os.path.join(current_dir, "kernels")
+kernel_dir = os.path.join(os.path.dirname(current_dir), "kernels")
 
 _backend = load(
     name="forward_search_backend",
@@ -23,9 +23,8 @@ _backend = load(
     # buildSinogram() is a plain double-accumulation loop that depends on
     # auto-vectorization to be fast; at -O0 it took ~11.4s on the real
     # dataset, ~240x the actual GPU kernel's ~48ms. See forward_search.cpp's
-    # comment on buildSinogram() and docs/ARCHITECTURE.md for the writeup
-    # (found via the CLI/meson build, which had the same bug, fixed there by
-    # setting buildtype=release in meson.build).
+    # comment on buildSinogram() (found via the CLI/meson build, which had
+    # the same bug, fixed there by setting buildtype=release in meson.build).
     extra_cflags=[f'-DKERNEL_DIR=\\"{kernel_dir}\\"', "-O3"],
 )
 

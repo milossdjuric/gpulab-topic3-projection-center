@@ -1,0 +1,162 @@
+name: forward_search Windows build (MinGW-w64)
+
+# First attempt at answering "does forward_search/ build on Windows at
+# all" (see milos/windows-support branch). This only tests build/link, not
+# running a real search, GitHub's windows-latest runners don't reliably
+# have a usable OpenCL device. It uses MinGW-w64 (via MSYS2) rather than
+# MSVC on purpose: forward_search/meson.build and src/backend.py both hand
+# GCC/Clang-style flags to the compiler/linker (-O3, -lboost_json,
+# -lOpenCL), which MinGW-w64's gcc accepts as-is but MSVC's cl.exe does
+# not. This workflow is UNVERIFIED until it actually runs once on GitHub
+# Actions -- exact MSYS2 package names/availability for OpenCL and HDF5
+# may need adjusting after the first real run.
+
+on:
+  push:
+    branches: [milos/windows-support]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-meson
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-hdf5
+            mingw-w64-x86_64-boost
+            mingw-w64-x86_64-opencl-headers
+            mingw-w64-x86_64-opencl-icd
+
+      - name: fetch CL/opencl.hpp
+        # MSYS2's mingw-w64-x86_64-opencl-headers package only ships the C
+        # API (CL/cl.h), not this separate C++ bindings header (on Debian/
+        # Ubuntu it's its own package, opencl-clhpp-headers). Fetched
+        # directly from upstream rather than vendored in-repo, since it's
+        # one file and this keeps the repo from carrying a third-party
+        # header nothing else here needs.
+        run: |
+          curl -sSL -o /mingw64/include/CL/opencl.hpp \
+            https://raw.githubusercontent.com/KhronosGroup/OpenCL-CLHPP/main/include/CL/opencl.hpp
+
+      - name: meson setup
+        run: |
+          cd forward_search
+          meson setup builddir
+
+      - name: meson compile
+        run: |
+          cd forward_search
+          meson compile -C builddir
+
+      - name: list build output
+        run: |
+          cd forward_search
+          ls -la builddir/forward_search.exe builddir/forward_search_resample.exe
+
+      - name: bundle runtime DLLs for standalone testing
+        # The .exe files dynamically link MinGW's runtime plus HDF5/Boost/
+        # OpenCL DLLs (see the "cannot find -lboost_json" fix's link line),
+        # so they won't run outside an MSYS2 shell (or under Wine, or on a
+        # plain Windows machine) unless those DLLs travel with them.
+        run: |
+          cd forward_search
+          mkdir dist
+          cp builddir/forward_search.exe builddir/forward_search_resample.exe dist/
+          ldd builddir/forward_search.exe builddir/forward_search_resample.exe \
+            | grep '/mingw64/' | awk '{print $3}' | sort -u | xargs -I{} cp {} dist/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: forward_search-windows
+          path: forward_search/dist/
+
+  # Second job: does the actual `projection-center` CLI (the thing
+  # RUNNING.md/run_all_*.sh actually use) work end to end on Windows, not
+  # just the raw forward_search/ C++ build. Uses a normal native Windows
+  # Python (not MSYS2's), since pyopencl's published wheels target that,
+  # not MSYS2's Python build.
+  python-cli:
+    runs-on: windows-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-meson
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-hdf5
+            mingw-w64-x86_64-boost
+            mingw-w64-x86_64-opencl-headers
+            mingw-w64-x86_64-opencl-icd
+
+      - name: fetch CL/opencl.hpp
+        shell: msys2 {0}
+        run: |
+          curl -sSL -o /mingw64/include/CL/opencl.hpp \
+            https://raw.githubusercontent.com/KhronosGroup/OpenCL-CLHPP/main/include/CL/opencl.hpp
+
+      - name: build forward_search (needed by --backend cpp)
+        shell: msys2 {0}
+        run: |
+          cd forward_search
+          meson setup builddir
+          meson compile -C builddir
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: install projection-center
+        shell: pwsh
+        run: pip install -e projection-center
+
+      - name: make synthetic dataset
+        shell: pwsh
+        run: python forward_search/tests/make_synth_hdf5.py synth.hdf5
+
+      - name: projection-center devices
+        shell: pwsh
+        continue-on-error: true
+        # Confirmed on 2026-09-10 (run 34426403984): this step itself
+        # works correctly, pyopencl imports and runs fine on native
+        # Windows, it just correctly reports "No OpenCL devices found" on
+        # this runner -- an expected environment limitation, not a bug.
+        # continue-on-error so that expected result doesn't skip the
+        # pipeline step below.
+        run: |
+          # forward_search.exe (built with MinGW-w64) needs its MinGW
+          # runtime DLLs on PATH when launched from outside the MSYS2
+          # shell -- this exact path is what msys2/setup-msys2 actually
+          # used in the build job's own logs, not a guess.
+          $env:Path = "D:\a\_temp\msys64\mingw64\bin;" + $env:Path
+          projection-center devices
+
+      - name: projection-center pipeline --backend cpp
+        shell: pwsh
+        continue-on-error: true
+        # continue-on-error: GitHub's Windows runners don't reliably have a
+        # usable OpenCL device, so this step failing with a "no platforms
+        # found"-style error is an accepted, expected environment
+        # limitation, not a code bug -- read the log to tell those apart
+        # from a real failure (crash, wrong exception, binary not found).
+        run: |
+          $env:Path = "D:\a\_temp\msys64\mingw64\bin;" + $env:Path
+          projection-center pipeline --backend cpp --cpp-mode buffer --data synth.hdf5 `
+            --xshift 5 --alpha 5 --beta 5 --xshift-step 5 --alpha-step 5 --beta-step 5 `
+            --output-pose pose.json --output-data resampled.hdf5
