@@ -11,7 +11,7 @@ reusable Python package with:
 
 - an OpenCL backend for GPU execution
 - a NumPy CPU fallback for environments without OpenCL
-- **this repository's own C++/OpenCL implementation** (`forward_search/`),
+- **this repository's own C++/OpenCL implementation** (`projection-center-cpp/`),
   reached as a third backend
 - HDF5 input and output compatible with the provided reference scripts
 - a CLI that runs on Windows, Linux, and macOS
@@ -34,7 +34,7 @@ This version moves both expensive parts to GPU kernels:
 
 That structure is substantially more parallel than the reference Python implementation and matches the requirement for a higher-grade solution with better parallelization.
 
-This repository's own C++/OpenCL implementation (`forward_search/`) uses the
+This repository's own C++/OpenCL implementation (`projection-center-cpp/`) uses the
 same shape independently, reachable here as `--backend cpp`.
 
 ## Repository Layout
@@ -47,8 +47,8 @@ same shape independently, reachable here as `--backend cpp`.
 |-- reference/                   (untouched CPU reference -- repo root, not here)
 |   |-- Topic_3_forwardsearching.py
 |   `-- Topic_3_resampling.py
-|-- forward_search/               (this repo's C++/OpenCL implementation -- reached via --backend cpp)
-|-- projection-center/            (this package)
+|-- projection-center-cpp/               (this repo's C++/OpenCL implementation -- reached via --backend cpp)
+|-- projection-center-python-opencl/            (this package)
 |   |-- pyproject.toml
 |   |-- README.md
 |   `-- src/
@@ -108,7 +108,7 @@ Install your vendor OpenCL loader and runtime first. Common packages include:
 Then install Python dependencies:
 
 ```bash
-cd projection-center
+cd projection-center-python-opencl
 python3 -m pip install -e .
 ```
 
@@ -158,7 +158,7 @@ original reference. Use the CLI equivalents instead:
 | `python Topic_3_resampling.py --data ... --pose ...` | `projection-center resample --backend opencl --data ... --pose ...` |
 | `python Topic_3_resampling_cpu.py --data ... --pose ...` | `projection-center resample --backend cpu --data ... --pose ...` |
 
-This repository additionally has no equivalent for `forward_search/`'s own
+This repository additionally has no equivalent for `projection-center-cpp/`'s own
 CLI (`--backend cpp`) in the source repo, since that implementation didn't
 exist there — see "Backend Selection" below.
 
@@ -238,20 +238,20 @@ projection-center pipeline --data data/projs_change.hdf5 --platform-index 0 --de
 ```
 
 **This repository adds a third backend, `cpp`**, delegating to
-`forward_search/`'s own C++/OpenCL implementation instead of this
+`projection-center-cpp/`'s own C++/OpenCL implementation instead of this
 package's kernels:
 
 ```bash
 projection-center search --backend cpp --data data/projs_change.hdf5 --output-pose real_cb_pose.json
 ```
 
-`--backend cpp` supports search, resample, and pipeline — `forward_search/`
+`--backend cpp` supports search, resample, and pipeline — `projection-center-cpp/`
 has its own `forward_search_resample` binary, and `CppBackend` shells out to
 it via `resample_from_file()` the same way it does for search. Verified
 end-to-end against the real dataset (2026-09-07): all three backends
 converge on the same winning pose and agree on the resampled output to
 within float32 noise. It also has one extra flag, `--cpp-mode {image,buffer}`
-(forwarding to `forward_search/`'s own `--mode`, default `buffer`), and
+(forwarding to `projection-center-cpp/`'s own `--mode`, default `buffer`), and
 doesn't support `--platform-index`/`--device-index` or non-default
 `--sample-count`/`--sample-angle-range` (see "Limitations").
 
@@ -334,7 +334,7 @@ projection-center pipeline --data data/proj_shepplogan128.hdf5 --output-pose out
 - Paths are handled through CLI arguments and `pathlib`.
 - The package is suitable for installation on Windows, Linux, and macOS.
 - `--backend cpp` is this repository's own addition, delegating to
-  `forward_search/`'s compiled binaries via subprocess rather than
+  `projection-center-cpp/`'s compiled binaries via subprocess rather than
   reimplementing its kernels here.
 
 ## Verification
@@ -378,7 +378,7 @@ unchanged.
    `Topic_3_forwardsearching.py` has the identical property and was not
    touched (confirmed it reproduces the same numbers).
 4. **`--backend cpp`'s output didn't match this package's quiet style.**
-   `forward_search/`'s binaries print their own stage diagnostics (device
+   `projection-center-cpp/`'s binaries print their own stage diagnostics (device
    pick, sinogram build, kernel timings) straight to stderr, which used to
    pass through unfiltered. `CppBackend` now captures that output on
    success (matching `opencl`/`cpu`'s plain 3-line summary), but still

@@ -29,7 +29,7 @@ clinfo -l   # should list at least one Device Type: GPU
 ## Build
 
 ```bash
-cd forward_search
+cd projection-center-cpp
 meson setup builddir      # first time only
 meson compile -C builddir # or: ninja -C builddir
 ```
@@ -152,7 +152,7 @@ Per course requirement, the OpenCL forward search is also callable from Python,
 without going through the CLI at all:
 
 ```python
-# run from forward_search/src/, or add it to sys.path first
+# run from projection-center-cpp/src/, or add it to sys.path first
 from backend import _backend
 
 result = _backend.search(
@@ -182,7 +182,7 @@ compute).
 
 Tests: `tests/test_backend_smoke.py` (backend runs and returns sane output) and
 `tests/test_cli_vs_backend.py` (backend and CLI agree on identical input) —
-run both with `python3 tests/<name>.py` from the `forward_search/` directory.
+run both with `python3 tests/<name>.py` from the `projection-center-cpp/` directory.
 
 **Known driver caveat (this dev machine only):** `mode="image"` crashes on this
 machine's Intel NEO OpenCL driver — a driver bug unrelated to this project's code

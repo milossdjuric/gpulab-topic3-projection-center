@@ -18,7 +18,7 @@ The original reference scripts (`Topic_3_forwardsearching.py`,
 `Topic_3_resampling.py`, kept unmodified in `reference/`) are plain Python:
 one loop over every candidate pose, one loop over every pixel. Both are slow.
 
-`forward_search/` (this repo's own C++ implementation) replaces the slow
+`projection-center-cpp/` (this repo's own C++ implementation) replaces the slow
 parts with GPU kernels:
 
 - searching: one GPU work-group per candidate pose
@@ -56,7 +56,7 @@ Longer write-ups live as PDFs under `repo_docs/`:
 |   |-- Topic_3_forwardsearching.py
 |   |-- Topic_3_resampling.py
 |   `-- run_reference_pipeline.py     runs both of the above, one command
-|-- forward_search/                   this repo's C++/OpenCL implementation
+|-- projection-center-cpp/                   this repo's C++/OpenCL implementation
 |   |-- src/
 |   |   |-- forward_search.cpp/.hpp     forward search host code
 |   |   |-- resample.cpp/.hpp           resampling host code
@@ -65,7 +65,7 @@ Longer write-ups live as PDFs under `repo_docs/`:
 |   |-- kernels/*.cl                   OpenCL C kernels
 |   |-- tests/                         smoke + CLI-vs-backend regression tests
 |   `-- README.md
-|-- projection-center/                fetched Python/PyOpenCL implementation
+|-- projection-center-python-opencl/                fetched Python/PyOpenCL implementation
 |   |-- pyproject.toml
 |   |-- README.md
 |   `-- src/projection_center_searching/
@@ -85,9 +85,8 @@ Longer write-ups live as PDFs under `repo_docs/`:
 |-- scripts/
 |   |-- run_all_128.sh                 full run against the 128px dataset
 |   `-- run_all_512.sh                 full run against the 512px dataset
-|-- tests/                            root-level regression tests, one per bug fixed
 |-- meson.build                       root-level KDevelop build file (duplicates
-|                                      forward_search/meson.build, see its own
+|                                      projection-center-cpp/meson.build, see its own
 |                                      comment for why it can't just include it)
 |-- PROGRESS_REPORT.md                mid-term progress report (source; PDF in docs/reports/)
 `-- runs/                             (gitignored) validation run outputs/logs
@@ -99,8 +98,8 @@ Longer write-ups live as PDFs under `repo_docs/`:
 - A C++17 compiler, Meson + Ninja, HDF5 C++ headers, Boost (`program_options`, JSON)
 - An installed OpenCL runtime
 
-`forward_search/`'s C++ dependencies are declared in `forward_search/meson.build`;
-`projection-center/`'s Python dependencies in `projection-center/pyproject.toml`.
+`projection-center-cpp/`'s C++ dependencies are declared in `projection-center-cpp/meson.build`;
+`projection-center-python-opencl/`'s Python dependencies in `projection-center-python-opencl/pyproject.toml`.
 
 ## Input Data
 
@@ -147,7 +146,7 @@ instead, see below.
 
    **`projection_center_pipeline_cpp`** (type: Compiled Binary, mode: Executable)
    - Executable: `<project-root>/build/projection_center_pipeline_cpp` (absolute path, verified working)
-   - Arguments: `--data data/proj_shepplogan128.hdf5 --search-kernel forward_search/kernels/forward_search.cl --resample-kernel forward_search/kernels/resample.cl --output-pose /tmp/kdev_cpp_pose.h5 --output-data /tmp/kdev_cpp_resampled.hdf5`
+   - Arguments: `--data data/proj_shepplogan128.hdf5 --search-kernel projection-center-cpp/kernels/forward_search.cl --resample-kernel projection-center-cpp/kernels/resample.cl --output-pose /tmp/kdev_cpp_pose.h5 --output-data /tmp/kdev_cpp_resampled.hdf5`
    - Working directory: the project root
 
    **`projection_center_pipeline_opencl`** (type: Script Application)
@@ -159,7 +158,7 @@ instead, see below.
    **`projection_center_pipeline_reference`** (type: Script Application)
    - Interpreter: your `python3`
    - Script: `<project-root>/reference/run_reference_pipeline.py` (absolute path, verified working)
-   - Arguments: `--data data/proj_shepplogan512.hdf5 --output-pose /tmp/kdev_reference_pose.json --output-data /tmp/kdev_reference_resampled.hdf5`
+   - Arguments: `--data data/proj_shepplogan128.hdf5 --output-pose /tmp/kdev_reference_pose.json --output-data /tmp/kdev_reference_resampled.hdf5`
    - Working directory: the project root
 
    Use full paths for the two fields marked above, that's what actually
@@ -169,8 +168,8 @@ instead, see below.
    that file actually exists before you point the Executable field at it.
 
 4. **Run one**: Run → Current Launch Configuration → pick one, then Run →
-   Execute (`Shift+F9`). cpp and opencl finish in seconds; reference (on the
-   512px dataset) takes about 85 minutes. That's expected, not a hang.
+   Execute (`Shift+F9`). cpp and opencl finish in seconds; reference takes
+   about 5 to 6 minutes. That's expected, not a hang.
 
 Example output from `projection_center_pipeline_cpp`, run this way:
 
@@ -180,7 +179,7 @@ Full version of this guide: `repo_docs/kdevelop-setup.pdf`.
 
 ## CLI Usage
 
-Once `projection-center/` is installed (see "OpenCL Setup" at the bottom of
+Once `projection-center-python-opencl/` is installed (see "OpenCL Setup" at the bottom of
 this file), one command does everything:
 
 ```bash
@@ -321,7 +320,7 @@ Recommended checks:
   default, is unaffected and is what's actually validated.
 - `--backend cpp` doesn't support `--platform-index`/`--device-index` (it
   always picks the first GPU) or a non-default `--sample-count`/
-  `--sample-angle-range`; `forward_search/`'s own CLI hardcodes those.
+  `--sample-angle-range`; `projection-center-cpp/`'s own CLI hardcodes those.
 - On the small `proj_shepplogan128.hdf5` dataset, the found `xshift` sits on
   the edge of its search range rather than settling at a clean interior
   value, a property of that phantom's own symmetry, not a bug in either
@@ -329,7 +328,7 @@ Recommended checks:
 
 ## OpenCL Setup
 
-You need both an installed OpenCL runtime and, for `projection-center/`,
+You need both an installed OpenCL runtime and, for `projection-center-python-opencl/`,
 the Python package.
 
 ### Linux
@@ -340,12 +339,12 @@ for Intel iGPUs). Then:
 
 ```bash
 # C++ side
-cd forward_search
+cd projection-center-cpp
 meson setup builddir && meson compile -C builddir
 cd ..
 
 # Python side
-cd projection-center
+cd projection-center-python-opencl
 python3 -m pip install -e .
 cd ..
 ```
@@ -365,22 +364,22 @@ pacman -S --needed mingw-w64-x86_64-toolchain mingw-w64-x86_64-meson \
   mingw-w64-x86_64-opencl-headers mingw-w64-x86_64-opencl-icd
 
 # MSYS2's opencl-headers package doesn't include the C++ bindings header
-# forward_search/ uses, fetch it once:
+# projection-center-cpp/ uses, fetch it once:
 curl -sSL -o /mingw64/include/CL/opencl.hpp \
   https://raw.githubusercontent.com/KhronosGroup/OpenCL-CLHPP/main/include/CL/opencl.hpp
 
-cd forward_search
+cd projection-center-cpp
 meson setup builddir
 meson compile -C builddir
 ```
 
 Produces `builddir/forward_search.exe` and
 `builddir/forward_search_resample.exe`. For `--backend cpp` through the
-Python CLI, install `projection-center` with a normal Windows Python (not
-MSYS2's), and put MinGW's runtime DLLs on `PATH`:
+Python CLI, install `projection-center-python-opencl` with a normal
+Windows Python (not MSYS2's), and put MinGW's runtime DLLs on `PATH`:
 
 ```bash
-pip install -e projection-center
+pip install -e projection-center-python-opencl
 set PATH=C:\msys64\mingw64\bin;%PATH%
 projection-center devices
 ```
@@ -392,7 +391,7 @@ MSVC): `repo_docs/windows-support.pdf`.
 ## Parallelization Strategies Explored
 
 This isn't just one GPU port with a couple of flags. A few genuinely
-different approaches were tried, mostly in `forward_search/`:
+different approaches were tried, mostly in `projection-center-cpp/`:
 
 - **Two ways of reading the sinogram on the GPU.** `--mode image` lets
   the GPU's own hardware do bilinear interpolation. `--mode buffer` does
@@ -406,7 +405,7 @@ different approaches were tried, mostly in `forward_search/`:
   candidate, and how many images get sent to the GPU per batch during
   resample, were both measured and adjusted, not just left as whatever
   the first working value was. See `repo_docs/optimizations-report.pdf`.
-- **A separate Python/OpenCL implementation.** `projection-center/` is a
+- **A separate Python/OpenCL implementation.** `projection-center-python-opencl/` is a
   second, independent GPU implementation, written in Python with
   PyOpenCL instead of C++, not a wrapper around the same code, and
   confirmed to give the same answer.

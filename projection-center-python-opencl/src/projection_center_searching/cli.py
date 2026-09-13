@@ -51,16 +51,16 @@ def _add_common_runtime_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--backend", choices=("opencl", "cpu", "cpp", "hybrid"), default="opencl",
         help="Execution backend. 'cpp' delegates both search and resample to this repo's "
-             "C++/OpenCL forward_search/ implementation (forward_search / "
+             "C++/OpenCL projection-center-cpp/ implementation (forward_search / "
              "forward_search_resample binaries) instead of this package's own kernels. "
-             "'hybrid' uses forward_search/'s cpp search (search_from_file()) with this "
-             "package's own opencl resample kernel, not forward_search/'s resample binary.",
+             "'hybrid' uses projection-center-cpp/'s cpp search (search_from_file()) with this "
+             "package's own opencl resample kernel, not projection-center-cpp/'s resample binary.",
     )
     parser.add_argument("--platform-index", type=int, default=None, help="OpenCL platform index (opencl backend only).")
     parser.add_argument("--device-index", type=int, default=None, help="OpenCL device index (opencl backend only).")
     parser.add_argument(
         "--cpp-mode", choices=("image", "buffer"), default="buffer",
-        help="cpp backend only: OpenCL sinogram format (forward_search/'s own --mode). "
+        help="cpp backend only: OpenCL sinogram format (projection-center-cpp/'s own --mode). "
              "Default 'buffer' avoids this project's known Image2D driver bug.",
     )
 
@@ -116,12 +116,16 @@ def _handle_search(args: argparse.Namespace) -> int:
         device_index=args.device_index,
         cpp_mode=args.cpp_mode,
     )
-    print(f"Best MSE: {result.mse:.8f}")
-    print(f"xshift (mm): {result.xshift * 1000.0:.6f}")
-    print(f"alpha (deg): {result.alpha * 180.0 / 3.141592653589793:.6f}")
-    print(f"beta (deg): {result.beta * 180.0 / 3.141592653589793:.6f}")
-    print(f"center_point: ({result.center_point[0]:.6f}, {result.center_point[1]:.6f})")
-    print(f"pose json: {args.output_pose}")
+    # opencl already printed its own detailed summary (Loaded/Device/MSE/
+    # xshift/alpha/beta/search kernel/search total), matching
+    # projection-center-cpp/'s own output, inside run_search() itself.
+    if args.backend != "opencl":
+        print(f"Best MSE: {result.mse:.8f}")
+        print(f"xshift (mm): {result.xshift * 1000.0:.6f}")
+        print(f"alpha (deg): {result.alpha * 180.0 / 3.141592653589793:.6f}")
+        print(f"beta (deg): {result.beta * 180.0 / 3.141592653589793:.6f}")
+        print(f"center_point: ({result.center_point[0]:.6f}, {result.center_point[1]:.6f})")
+        print(f"pose json: {args.output_pose}")
     return 0
 
 
@@ -136,8 +140,12 @@ def _handle_resample(args: argparse.Namespace) -> int:
         device_index=args.device_index,
         cpp_mode=args.cpp_mode,
     )
-    print(f"Resampled using pose MSE: {pose.mse:.8f}")
-    print(f"output hdf5: {output_path}")
+    # opencl already printed its own detailed summary (Device/Resampled/
+    # resample total/Wrote), matching projection-center-cpp/'s own output,
+    # inside run_resample() itself.
+    if args.backend != "opencl":
+        print(f"Resampled using pose MSE: {pose.mse:.8f}")
+        print(f"output hdf5: {output_path}")
     return 0
 
 
@@ -153,9 +161,13 @@ def _handle_pipeline(args: argparse.Namespace) -> int:
         device_index=args.device_index,
         cpp_mode=args.cpp_mode,
     )
-    print(f"Best MSE: {result.mse:.8f}")
-    print(f"output pose: {args.output_pose}")
-    print(f"output hdf5: {output_path}")
+    # opencl already printed its own detailed summary (search's block, then
+    # resample's block, then "total (search + resample)") inside
+    # run_pipeline() itself, matching projection-center-cpp/'s own output.
+    if args.backend != "opencl":
+        print(f"Best MSE: {result.mse:.8f}")
+        print(f"output pose: {args.output_pose}")
+        print(f"output hdf5: {output_path}")
     return 0
 
 
