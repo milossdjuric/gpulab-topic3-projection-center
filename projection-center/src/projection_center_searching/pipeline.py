@@ -126,7 +126,7 @@ def run_pipeline(
     cpp_mode: str = "buffer",
 ) -> tuple[SearchResult, Path]:
     if backend_name == "cpp":
-        # forward_search_pipeline runs search+resample in one process,
+        # projection_center_pipeline_cpp runs search+resample in one process,
         # instead of run_search()+run_resample()'s two separate cpp
         # subprocess calls round-tripping the pose through a JSON file --
         # see CppBackend.pipeline_from_file().

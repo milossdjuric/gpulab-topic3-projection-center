@@ -1,3 +1,7 @@
+// The search-only command line tool. Reads a dataset, runs the GPU search
+// once (computeCOR(), in forward_search.cpp), and writes the pose it found
+// to a file. Does not do resampling at all, see resample_main.cpp for
+// that, or pipeline_main.cpp for both together.
 #include <chrono>
 #include <iostream>
 #include <stdexcept>
@@ -10,6 +14,8 @@
 
 namespace po = boost::program_options;
 
+// Reads one dataset out of its HDF5 file: the geometry, the angles, and
+// every projection image.
 static CbPara loadHDF5(const std::string& path, std::vector<float>& projs) {
     H5::H5File file(path, H5F_ACC_RDONLY);
 
@@ -57,11 +63,16 @@ static CbPara loadHDF5(const std::string& path, std::vector<float>& projs) {
     return p;
 }
 
+// Writes one plain number into an already-open HDF5 file. Saves
+// writeHDF5() below from repeating the same lines for every field.
 static void writeScalar(H5::H5File& file, const std::string& name, double v) {
     H5::DataSpace space(H5S_SCALAR);
     file.createDataSet(name, H5::PredType::NATIVE_DOUBLE, space).write(&v, H5::PredType::NATIVE_DOUBLE);
 }
 
+// Writes the found pose to an HDF5 file (xshift, alpha, beta, MSE,
+// kernel_ms, and the 2-element center_point array), creating the output
+// directory first if it does not exist yet.
 static void writeHDF5(const std::string& path, const CbPose& pose) {
     std::filesystem::path fpath(path);
     if (fpath.has_parent_path())
@@ -82,6 +93,9 @@ static void writeHDF5(const std::string& path, const CbPose& pose) {
         .write(center, H5::PredType::NATIVE_DOUBLE);
 }
 
+// Reads the command line flags, loads the dataset, runs the search, and
+// writes the result. All the real GPU work happens inside computeCOR(),
+// this is just the setup around it.
 int main(int argc, char* argv[]) {
     po::options_description desc("Options");
     desc.add_options()

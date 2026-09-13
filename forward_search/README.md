@@ -37,8 +37,7 @@ meson compile -C builddir # or: ninja -C builddir
 `meson.build` sets `buildtype=release` by default (fixed 2026-08-25 — it
 previously set nothing, which meant meson's own default of `buildtype=debug`
 i.e. `-O0`; `buildSinogram()`'s CPU loop alone took ~11.4s at `-O0` vs
-~0.3-0.8s at `-O3`, ~240x more than the GPU search kernel's own ~48ms — see
-`docs/ARCHITECTURE.md` §11 for the full investigation). If you already have
+~0.3-0.8s at `-O3`, ~240x more than the GPU search kernel's own ~48ms). If you already have
 an existing `builddir/` configured before this fix, `meson setup` won't
 retroactively apply the new default — reconfigure it once:
 
@@ -109,8 +108,7 @@ pass/fail table.
 **Already done once, real data, this machine:** `--mode buffer` against the
 real `projs_change.hdf5` (180×1024×1024) — Python reference 10m33s vs GPU
 ~40-49s (~13-16x speedup), MSE relative diff 6.5e-6, identical winning pose.
-See `docs/ARCHITECTURE.md` §6.4 for the full table and `runs/` for the raw
-logs/outputs. `--mode image` hasn't been run against real data yet (see the
+See `runs/` for the raw logs/outputs. `--mode image` hasn't been run against real data yet (see the
 driver caveat below).
 
 **Known reference bug (not a GPU defect):** `get_linear_interpolate_MSE` in
@@ -174,8 +172,7 @@ No separate build step, no meson — this path is entirely independent of the
 CLI's `builddir/`, including its optimization flags: `backend.py` passes
 `-O3` explicitly in `extra_cflags` (added 2026-08-25 — `torch.utils.cpp_extension`
 sets no optimization flag by default, so this path had the same `-O0`
-slowdown the CLI's missing `meson.build buildtype` caused; see
-`docs/ARCHITECTURE.md` §11). If you built the extension before this fix,
+slowdown the CLI's missing `meson.build buildtype` caused). If you built the extension before this fix,
 clear the JIT cache once to pick it up:
 `rm -rf ~/.cache/torch_extensions/*/forward_search_backend`.
 

@@ -5,8 +5,8 @@ command, with the same --data/--output-pose/--output-data flags as
 projection-center launch configs as a uniform "full pipeline" entry point.
 
 Topic_3_resampling.py's own resampling() wrapper writes to a hardcoded
-lab-network path and can't complete off that network (see RUNNING.md
-Limitations), so this calls the reference's own unmodified search/resample
+lab-network path and can't complete off that network, so this calls the
+reference's own unmodified search/resample
 functions directly, in-process, via benchmark_backends.run_reference() --
 the same technique validate_forward_search.py's --fix-ref already uses.
 Every line of actual computation is still the reference's own unmodified

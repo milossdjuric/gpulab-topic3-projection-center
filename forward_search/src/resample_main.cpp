@@ -1,3 +1,8 @@
+// The resample-only command line tool. Reads a dataset plus a pose file
+// from an earlier search, runs the GPU resample once (computeResample(),
+// in resample.cpp), and writes the corrected images to a file. Does not
+// run search itself, it expects the pose to already exist. See main.cpp
+// for search, or pipeline_main.cpp for both together.
 #include <chrono>
 #include <fstream>
 #include <iostream>
@@ -15,9 +20,9 @@
 namespace po = boost::program_options;
 namespace json = boost::json;
 
-// Duplicated from main.cpp rather than shared, matching this project's
-// existing pattern of each CLI binary being self-contained (main.cpp has no
-// shared hdf5_io.cpp/.hpp to pull from). Kept identical on purpose.
+// Reads one dataset out of its HDF5 file, same as main.cpp's loadHDF5().
+// Copied here instead of shared, since each CLI binary in this project
+// stands on its own.
 static CbPara loadHDF5(const std::string& path, std::vector<float>& projs) {
     H5::H5File file(path, H5F_ACC_RDONLY);
 
@@ -42,9 +47,9 @@ static CbPara loadHDF5(const std::string& path, std::vector<float>& projs) {
     p.pixel_size      = readDouble("pixelSize");
     p.voxel_size      = readDouble("voxelSize");
     p.num_projs       = readInt("num_projs");
-    // Derived from Projection's real shape (num_projs, height, width), not
-    // trusted from the file's detector_width/detector_height scalars:
-    // some dataset files store those two swapped relative to the actual
+    // Derived from Projection's real shape (num_projs, height, width),
+    // not trusted from the file's detector_width/detector_height scalars.
+    // Some dataset files store those two swapped relative to the actual
     // array, which used to silently read past the real data.
     p.detector_height = static_cast<int>(dims[1]);
     p.detector_width  = static_cast<int>(dims[2]);
@@ -63,9 +68,8 @@ static CbPara loadHDF5(const std::string& path, std::vector<float>& projs) {
     return p;
 }
 
-// Reads the pose JSON written by either forward-search implementation
-// (this repo's CLI via CppBackend, or pyopencl_backend's own write_pose_json()) --
-// both write the same {center_point: [x,y], xshift, alpha, beta, MSE} shape.
+// Reads a pose file, whichever of the two implementations wrote it. Both
+// save the same shape, so one parser can read either.
 static ResamplePose readPoseJSON(const std::string& path) {
     std::ifstream f(path);
     if (!f) throw std::runtime_error("Cannot open pose file: " + path);
@@ -85,10 +89,9 @@ static ResamplePose readPoseJSON(const std::string& path) {
     return pose;
 }
 
-// Output schema matches pyopencl_backend's hdf5_io.py write_resampled_dataset()
-// and Topic_3_resampling.py's own writer: pixelSize, SDD, SOD, voxelSize,
-// Volumen_num_xz, Volumen_num_y, num_projs, detector_width, detector_height,
-// Angle, Projection.
+// Writes the corrected images and geometry to an HDF5 file, same field
+// names every other implementation uses, so any of them can read any
+// other's output.
 static void writeResampledHDF5(const std::string& path, const CbPara& para, const std::vector<float>& projs) {
     std::filesystem::path fpath(path);
     if (fpath.has_parent_path())
@@ -123,6 +126,9 @@ static void writeResampledHDF5(const std::string& path, const CbPara& para, cons
         .write(projs.data(), H5::PredType::NATIVE_FLOAT);
 }
 
+// Reads the command line flags, loads the dataset and the pose, runs
+// resample, and writes the corrected images. All the real GPU work
+// happens inside computeResample(), this is just the setup around it.
 int main(int argc, char* argv[]) {
     po::options_description desc("Options");
     desc.add_options()

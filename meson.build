@@ -28,6 +28,6 @@ executable('forward_search_resample',
   ['forward_search/src/resample_main.cpp', 'forward_search/src/resample.cpp'],
   dependencies: [opencl, hdf5, boost, boost_json])
 
-executable('forward_search_pipeline',
+executable('projection_center_pipeline_cpp',
   ['forward_search/src/pipeline_main.cpp', 'forward_search/src/forward_search.cpp', 'forward_search/src/resample.cpp'],
   dependencies: [opencl, hdf5, boost])

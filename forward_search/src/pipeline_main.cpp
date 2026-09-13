@@ -1,14 +1,14 @@
-// Single-process search + resample: loads the HDF5 data once, runs
-// computeCOR() then computeResample() in the same process, and passes the
-// found pose directly in memory instead of round-tripping it through a
-// JSON file. This is what running `forward_search` and
-// `forward_search_resample` back to back does NOT do -- each of those is
-// its own process, so each independently pays process startup, HDF5
-// loading, OpenCL device pick, context creation, and kernel compilation.
-// This binary still builds two separate OpenCL programs internally (one
-// inside computeCOR(), one inside computeResample(), both unmodified), so
-// kernel compilation itself still happens twice -- only the process-level
-// and I/O-level duplication is removed here. See OPTIMIZATIONS.md.
+// The full pipeline command line tool, projection_center_pipeline_cpp.
+// Does both stages in one program: loads the file once, runs search then
+// resample in the same process, and hands the found pose straight over in
+// memory instead of writing it to a file and reading it back.
+//
+// Running `forward_search` then `forward_search_resample` separately does
+// not get you this: each one is its own program, so each pays its own
+// startup cost (loading the file, picking the GPU, compiling the kernel)
+// all over again. This binary still compiles two separate kernels
+// internally, one for search and one for resample, so that part is not
+// saved, only the doubled startup cost is.
 #include <chrono>
 #include <iostream>
 #include <stdexcept>
@@ -22,8 +22,9 @@
 
 namespace po = boost::program_options;
 
-// Duplicated from main.cpp/resample_main.cpp rather than shared, matching
-// this project's existing pattern of each CLI binary being self-contained.
+// Reads one dataset out of its HDF5 file, same as the other two binaries'
+// loadHDF5(). Copied here instead of shared, since each CLI binary in
+// this project stands on its own.
 static CbPara loadHDF5(const std::string& path, std::vector<float>& projs) {
     H5::H5File file(path, H5F_ACC_RDONLY);
 
@@ -65,11 +66,14 @@ static CbPara loadHDF5(const std::string& path, std::vector<float>& projs) {
     return p;
 }
 
+// Writes one plain number into an already-open HDF5 file. Saves
+// writePoseHDF5() below from repeating the same lines for every field.
 static void writeScalar(H5::H5File& file, const std::string& name, double v) {
     H5::DataSpace space(H5S_SCALAR);
     file.createDataSet(name, H5::PredType::NATIVE_DOUBLE, space).write(&v, H5::PredType::NATIVE_DOUBLE);
 }
 
+// Writes the pose search just found to a file.
 static void writePoseHDF5(const std::string& path, const CbPose& pose) {
     std::filesystem::path fpath(path);
     if (fpath.has_parent_path())
@@ -89,6 +93,8 @@ static void writePoseHDF5(const std::string& path, const CbPose& pose) {
         .write(center, H5::PredType::NATIVE_DOUBLE);
 }
 
+// Writes the corrected images and geometry that resample just produced to
+// a file, same field names every implementation in this project uses.
 static void writeResampledHDF5(const std::string& path, const CbPara& para, const std::vector<float>& projs) {
     std::filesystem::path fpath(path);
     if (fpath.has_parent_path())
@@ -123,6 +129,10 @@ static void writeResampledHDF5(const std::string& path, const CbPara& para, cons
         .write(projs.data(), H5::PredType::NATIVE_FLOAT);
 }
 
+// Reads the command line flags, loads the dataset once, runs search, then
+// runs resample right on the pose search just found, no file in between.
+// Writes both a pose file and a corrected-images file, and prints three
+// timings: search alone, resample alone, and the grand total.
 int main(int argc, char* argv[]) {
     po::options_description desc("Options");
     desc.add_options()
@@ -166,6 +176,7 @@ int main(int argc, char* argv[]) {
         CbPose pose = computeCOR(para, projs, args,
                                  vm["search-kernel"].as<std::string>(),
                                  vm["mode"].as<std::string>());
+        auto t_search_done = std::chrono::steady_clock::now();
 
         writePoseHDF5(vm["output-pose"].as<std::string>(), pose);
         std::cerr << "MSE:    " << pose.mse << "\n";
@@ -173,10 +184,12 @@ int main(int argc, char* argv[]) {
         std::cerr << "alpha:  " << pose.alpha / PI * 180.0 << " deg\n";
         std::cerr << "beta:   " << pose.beta  / PI * 180.0 << " deg\n";
         std::cerr << "search kernel: " << pose.kernel_ms << " ms\n";
+        std::cerr << "search total: "
+                  << std::chrono::duration_cast<std::chrono::milliseconds>(t_search_done - t_load1).count()
+                  << " ms (device pick, context, sinogram build/upload, kernel compile, and the kernel itself)\n";
 
-        // In-memory pose hand-off -- no JSON round trip, the raw two-binary
-        // route needs this since search and resample are separate
-        // processes, here they're not.
+        // Hand the pose straight to resample, no file needed here since
+        // both stages run in the same process.
         ResamplePose rpose;
         rpose.center_x = pose.center_x;
         rpose.center_y = pose.center_y;
@@ -188,12 +201,17 @@ int main(int argc, char* argv[]) {
                                                 vm["downsample"].as<int>(),
                                                 vm["resample-kernel"].as<std::string>(),
                                                 vm["batch-size"].as<int>());
+        auto t_resample_done = std::chrono::steady_clock::now();
+        std::cerr << "resample total: "
+                  << std::chrono::duration_cast<std::chrono::milliseconds>(t_resample_done - t_search_done).count()
+                  << " ms (device pick, context, kernel compile, and every batch)\n";
 
         writeResampledHDF5(vm["output-data"].as<std::string>(), result.para, result.projs);
         auto t_done = std::chrono::steady_clock::now();
-        std::cerr << "Wrote " << vm["output-data"].as<std::string>()
-                  << " (" << std::chrono::duration_cast<std::chrono::milliseconds>(t_done - t_load1).count()
-                  << "ms search+resample total)\n";
+        std::cerr << "Wrote " << vm["output-data"].as<std::string>() << "\n";
+        std::cerr << "total (search + resample): "
+                  << std::chrono::duration_cast<std::chrono::milliseconds>(t_done - t_load1).count()
+                  << " ms\n";
 
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << "\n";

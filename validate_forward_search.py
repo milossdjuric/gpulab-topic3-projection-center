@@ -99,8 +99,7 @@ def _corrected_get_linear_interpolate_MSE(N, sino_input, SDD, detector_width,
        REFERENCE BUG at the top of this file.
     2. Off-detector and background-only (MIN_SIGNAL) sample pairs are
        excluded from the MSE, matching the same fix already applied to the
-       GPU kernels (see forward_search.cl's MIN_SIGNAL and
-       docs/ARCHITECTURE.md section 12). The caller
+       GPU kernels (see forward_search.cl's MIN_SIGNAL constant). The caller
        (find_conebeam_COR_line_forward) always divides the returned array
        by the fixed N, so excluded pairs are returned as 0 and included
        pairs are pre-scaled by N/valid_count -- that makes the caller's

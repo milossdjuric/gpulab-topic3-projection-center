@@ -1,3 +1,6 @@
+// Lets Python call the search function directly, without going through a
+// subprocess or a file. Projections come in as a NumPy array, the found
+// pose comes back as a Python dict.
 #include <pybind11/pybind11.h>
 #include <pybind11/numpy.h>
 #include "forward_search.hpp"
@@ -12,6 +15,10 @@ namespace py = pybind11;
 #error "KERNEL_DIR must be defined by the build (set in backend.py via extra_cflags)"
 #endif
 
+// The function Python actually calls. Checks the array is the right
+// shape, converts it into the plain C++ type the search function expects,
+// runs the same search every CLI binary uses, and hands the result back
+// as a dict.
 static py::dict search(
     py::array_t<float, py::array::c_style | py::array::forcecast> projections,
     double SDD, double SOD, double pixel_size,
@@ -65,6 +72,8 @@ static py::dict search(
     return result;
 }
 
+// Registers this module as forward_search_backend, with one function,
+// search(), so Python can import it and call it like any other package.
 PYBIND11_MODULE(forward_search_backend, m) {
     m.doc() = "OpenCL cone-beam CT forward search backend";
     m.def("search", &search,

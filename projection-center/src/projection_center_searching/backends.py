@@ -25,8 +25,7 @@ except ImportError:  # pragma: no cover
 # both CpuBackend's search() and the center_search_reduce kernel below (and
 # from forward_search.cl's kernels) prevents a candidate pose from faking a
 # low MSE by pushing rays into empty space around the phantom instead of
-# genuinely aligning. See docs/ARCHITECTURE.md for the investigation this
-# came from. Kept as a plain module constant (not per-dataset-tuned) since
+# genuinely aligning. Kept as a plain module constant (not per-dataset-tuned) since
 # it only needs to separate "definitely background" from "definitely some
 # signal" on an already-normalized [0,1] scale, not draw a precise edge.
 _MIN_SIGNAL = 0.01
@@ -38,7 +37,7 @@ _MIN_SIGNAL = 0.01
 # exclude comparisons that are meaningless by the reference's own logic; a
 # relative-error metric optimizes a genuinely different objective and isn't
 # safe to apply by default. Staying faithful to the Python reference takes
-# priority -- see docs/ARCHITECTURE.md §12.4.
+# priority.
 
 KERNEL_SOURCE = r"""
 #define MIN_SIGNAL 0.01f
@@ -100,8 +99,7 @@ __kernel void center_search_reduce(
     // the host instead of recomputed here per candidate. tan(theta0 +/-
     // dtheta) then comes from the tangent addition/subtraction formula,
     // pure multiply/add/divide, no trig call in this hot loop at all.
-    // Ported from forward_search.cl's identical optimization (see
-    // OPTIMIZATIONS.md).
+    // Ported from forward_search.cl's identical optimization.
     for (int sample_index = lane; sample_index < sample_count; sample_index += workgroup_size) {
         float tan_dtheta = tan_dtheta_values[sample_index];
 
@@ -382,9 +380,7 @@ class OpenCLBackend:
         # rotation-matrix buffer (identical across all batches of one resample
         # run), and the input/output device buffers, instead of paying full
         # allocate/build/free overhead on every batch -- see the
-        # RepeatedKernelRetrieval warning this used to trigger and
-        # docs/ARCHITECTURE.md's note on resample() being overhead-bound, not
-        # compute-bound, at the per-batch granularity this ran at before.
+        # RepeatedKernelRetrieval warning this used to trigger.
         self._resample_kernel: cl.Kernel | None = None
         self._rotation_buffer: cl.Buffer | None = None
         self._rotation_matrix_id: int | None = None
@@ -595,7 +591,7 @@ def _cpp_pipeline_binary_path() -> Path:
     override = os.environ.get("FORWARD_SEARCH_CPP_PIPELINE_BINARY")
     if override:
         return Path(override)
-    return _repo_root() / "forward_search" / "builddir" / _exe_name("forward_search_pipeline")
+    return _repo_root() / "forward_search" / "builddir" / _exe_name("projection_center_pipeline_cpp")
 
 
 class CppBackend:
@@ -692,12 +688,12 @@ class CppBackend:
         search_config: SearchConfig,
         resample_config: ResampleConfig,
     ) -> SearchResult:
-        # Single process: forward_search_pipeline loads the data once and
+        # Single process: projection_center_pipeline_cpp loads the data once and
         # hands the pose to resample in memory, instead of the two separate
         # binary invocations search_from_file()+resample_from_file() use,
         # which round-trip the pose through a JSON file and each pay their
         # own process/HDF5-load/kernel-compile cost. See
-        # forward_search/src/pipeline_main.cpp and OPTIMIZATIONS.md.
+        # forward_search/src/pipeline_main.cpp.
         if search_config.sample_count != 1000 or search_config.sample_angle_range_deg != 30.0:
             raise ValueError(
                 "cpp backend hardcodes sample_count=1000 and sample_angle_range_deg=30.0 "
@@ -749,11 +745,10 @@ class CppBackend:
 class HybridBackend:
     """Search via forward_search/'s cpp binary (CppBackend), resample via
     this package's own opencl kernel (OpenCLBackend) -- a fourth backend
-    choice, not a blend of the other two's code. Motivated by the kernel_ms
-    comparison in OPTIMIZATIONS.md: which of cpp's or opencl's *search*
-    kernel is faster is dataset-dependent, and this package's own opencl
-    resample already has its buffer/kernel caching optimization (see
-    OPTIMIZATIONS.md), so this combination lets each stage use whichever
+    choice, not a blend of the other two's code. Motivated by measuring that
+    which of cpp's or opencl's *search* kernel is faster is dataset-dependent,
+    and this package's own opencl resample already has its buffer/kernel
+    caching optimization, so this combination lets each stage use whichever
     implementation makes sense, instead of forcing one backend for both.
     """
 

@@ -61,8 +61,7 @@ def _add_common_runtime_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--cpp-mode", choices=("image", "buffer"), default="buffer",
         help="cpp backend only: OpenCL sinogram format (forward_search/'s own --mode). "
-             "Default 'buffer' avoids this project's known Image2D driver bug -- see "
-             "docs/ARCHITECTURE.md §7.",
+             "Default 'buffer' avoids this project's known Image2D driver bug.",
     )
 
 

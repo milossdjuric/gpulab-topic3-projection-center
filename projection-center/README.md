@@ -60,7 +60,6 @@ same shape independently, reachable here as `--backend cpp`.
 |           |-- hdf5_io.py
 |           |-- models.py
 |           `-- pipeline.py
-`-- docs/ARCHITECTURE.md          (full design writeup, gitignored)
 ```
 
 ## Requirements
@@ -354,7 +353,7 @@ Recommended checks after installation:
 - macOS OpenCL support is deprecated by Apple and may fall back to CPU-only workflows in practice.
 - Runtime performance depends heavily on the installed OpenCL implementation and device memory.
 - `--backend cpp` supports search, resample, and pipeline (verified end-to-end against the real dataset, 2026-09-07), but doesn't support `--platform-index`/`--device-index` (always uses the first GPU found) or non-default `--sample-count`/`--sample-angle-range` (`forward_search.cpp` hardcodes these).
-- On the small `proj_shepplogan128.hdf5` dataset, the found `xshift` is weakly determined (a documented limitation of the algorithm itself, not this implementation) — see `docs/ARCHITECTURE.md` §12.
+- On the small `proj_shepplogan128.hdf5` dataset, the found `xshift` is weakly determined (a documented limitation of the algorithm itself, not this implementation).
 
 ## Fixes Applied In This Copy
 
@@ -385,7 +384,3 @@ unchanged.
    success (matching `opencl`/`cpu`'s plain 3-line summary), but still
    surfaces it in full if the subprocess actually fails, so nothing is
    harder to debug than before.
-
-Full write-ups, including a fourth fix that was tried and deliberately
-reverted (it regressed agreement with the Python reference), are in
-`docs/ARCHITECTURE.md` §11-§12.

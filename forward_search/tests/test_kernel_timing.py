@@ -3,7 +3,7 @@ execution time (via OpenCL event profiling), not just host-side wall-clock
 stage timestamps. Without this, there's no way to measure whether a kernel
 optimization actually helped -- whole-program wall time is dominated by
 HDF5 I/O and CPU-side sinogram building, not the ~48ms search kernel
-itself (see docs/ARCHITECTURE.md's report-mapping section)."""
+itself."""
 import math
 import os
 import sys

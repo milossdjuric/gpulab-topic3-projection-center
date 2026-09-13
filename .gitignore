@@ -1,4 +1,5 @@
 *.pdf
+!repo_docs/*.pdf
 docs/
 report_outline.md
 __pycache__/

@@ -11,7 +11,7 @@ directly comparable):
      get_cb_para()/get_rotation_matrix()/get_real_projection() functions
      called directly, in-process -- Topic_3_resampling.py's own resampling()
      wrapper writes to a hardcoded lab-network path and can't complete off
-     that network (see RUNNING.md Limitations), so this calls its
+     that network, so this calls its
      computation functions directly and writes the result under this
      script's own output directory instead. Every line of actual pixel
      computation is still the reference's own unmodified code; only the
@@ -203,8 +203,8 @@ def main():
         except RuntimeError as e:
             print(f"  reference FAILED: {e}")
             print("  This can be the known out-of-bounds bug crashing outright (not just")
-            print("  silently misbehaving) on a small/edge-of-range dataset -- see")
-            print("  RUNNING.md Limitations. Continuing with the other backends.")
+            print("  silently misbehaving) on a small/edge-of-range dataset.")
+            print("  Continuing with the other backends.")
             rows.append(("reference (FAILED, see above)", None, None))
 
     for backend in ("opencl", "cpu", "cpp", "hybrid"):

@@ -1,4 +1,4 @@
-"""Regression test: forward_search_pipeline (single process, search +
+"""Regression test: projection_center_pipeline_cpp (single process, search +
 resample in one run, pose handed off in memory) must produce byte-identical
 output to running forward_search then forward_search_resample separately
 (two processes, pose round-tripped through a JSON file)."""
@@ -17,7 +17,7 @@ from make_synth_hdf5 import make_synth_hdf5
 SYNTH_PATH = "/tmp/forward_search_test_pipeline_synth.hdf5"
 SEARCH_BIN = os.path.join(FORWARD_SEARCH_DIR, "builddir", "forward_search")
 RESAMPLE_BIN = os.path.join(FORWARD_SEARCH_DIR, "builddir", "forward_search_resample")
-PIPELINE_BIN = os.path.join(FORWARD_SEARCH_DIR, "builddir", "forward_search_pipeline")
+PIPELINE_BIN = os.path.join(FORWARD_SEARCH_DIR, "builddir", "projection_center_pipeline_cpp")
 
 OLD_POSE_H5 = "/tmp/pipeline_test_old_pose.h5"
 OLD_POSE_JSON = "/tmp/pipeline_test_old_pose.json"

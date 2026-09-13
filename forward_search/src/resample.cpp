@@ -1,3 +1,8 @@
+// The actual resample code. Given a dataset and a pose, works out where
+// the corrected geometry ends up, builds a rotation matrix for it, and
+// runs the resample kernel on the GPU in batches. computeResample(), at
+// the bottom, is the function every CLI binary calls; everything above it
+// is a helper only this file uses.
 #define CL_HPP_ENABLE_EXCEPTIONS
 #define CL_HPP_MINIMUM_OPENCL_VERSION 120
 #define CL_HPP_TARGET_OPENCL_VERSION 300
@@ -10,6 +15,7 @@
 
 namespace {
 
+// A plain 3D point/direction, used for the geometry math below.
 struct Vec3 { double x, y, z; };
 
 Vec3 cross(const Vec3& a, const Vec3& b) {
@@ -20,8 +26,10 @@ Vec3 cross(const Vec3& a, const Vec3& b) {
 double norm(const Vec3& v) { return std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z); }
 Vec3 normalized(const Vec3& v) { double n = norm(v); return { v.x / n, v.y / n, v.z / n }; }
 
-// Mirrors Topic_3_resampling.py's get_cb_para(): corrected SDD/SOD from the
-// found pose, plus downsampled pixel_size/detector dims.
+// Works out the corrected geometry for the output image: the new
+// effective distances (SDD/SOD) once the pose is accounted for, and the
+// new detector size after downsample is applied. Matches
+// Topic_3_resampling.py's get_cb_para().
 CbPara computeCorrectedGeometry(const CbPara& para, const ResamplePose& pose, int downsample) {
     CbPara out = para;
     out.pixel_size      = para.pixel_size * downsample;
@@ -40,10 +48,10 @@ CbPara computeCorrectedGeometry(const CbPara& para, const ResamplePose& pose, in
     return out;
 }
 
-// Mirrors Topic_3_resampling.py's get_rotation_matrix(): row-major flat
-// storage where flat[i*3+j] = axis_j[i] (numpy's column_stack([x,y,z]) then
-// .reshape(-1), C order) -- matches the resample.cl kernel's
-// nx = R[0]*x + R[1]*y + R[2]*z convention.
+// Builds the 3x3 rotation matrix for the found pose: three axes (x, y, z)
+// worked out from alpha/beta and the found center point, stored flat so
+// the resample.cl kernel can read it directly. Matches
+// Topic_3_resampling.py's get_rotation_matrix().
 void computeRotationMatrix(const CbPara& para, const ResamplePose& pose, float out[9]) {
     double sin_a = std::sin(pose.alpha), cos_a = std::cos(pose.alpha);
     double sin_b = std::sin(pose.beta),  cos_b = std::cos(pose.beta);
@@ -51,10 +59,10 @@ void computeRotationMatrix(const CbPara& para, const ResamplePose& pose, float o
     Vec3 y_axis{ -sin_a, cos_a * cos_b, cos_a * sin_b };
     Vec3 z_axis = normalized(Vec3{ -pose.center_x, -pose.center_y, para.SDD });
     Vec3 x_axis = normalized(cross(y_axis, z_axis));
-    // The reference computes `z = cross(x_axis, y_axis)` here but discards
-    // its value, re-normalizing the already-unit z_axis again instead of
-    // using `z` -- a no-op, but replicated faithfully (not "fixed") to keep
-    // exact numerical parity with Topic_3_resampling.py's get_rotation_matrix().
+    // The reference does a pointless extra step here (computes a cross
+    // product it never uses, then just re-normalizes z_axis again). It
+    // does nothing, but it's kept here on purpose so this code matches
+    // Topic_3_resampling.py's own math exactly, not just its result.
     z_axis = normalized(z_axis);
 
     out[0] = (float)x_axis.x; out[1] = (float)y_axis.x; out[2] = (float)z_axis.x;
@@ -64,6 +72,10 @@ void computeRotationMatrix(const CbPara& para, const ResamplePose& pose, float o
 
 } // namespace
 
+// Runs resample, called by every CLI binary that does it. Works out the
+// corrected geometry once, picks a GPU and compiles the kernel once, then
+// sends the images through it a batch at a time (so the whole dataset
+// never has to fit on the GPU at once), and returns everything corrected.
 ResampleOutput computeResample(const CbPara& para,
                                const std::vector<float>& projs,
                                const ResamplePose& pose,
@@ -81,21 +93,27 @@ ResampleOutput computeResample(const CbPara& para,
     cl::Program prog = buildProgram(ctx, dev, kernel_path);
     cl::Kernel kernel(prog, "resample_projections");
 
+    // Uploaded once, read by every batch: the rotation matrix does not
+    // change from one batch to the next.
     cl::Buffer rot_buf(ctx, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, 9 * sizeof(float), rotation);
 
-    int in_w = para.detector_width,      in_h = para.detector_height;
-    int out_w = out_para.detector_width, out_h = out_para.detector_height;
+    int in_w = para.detector_width,      in_h = para.detector_height;   // input detector size
+    int out_w = out_para.detector_width, out_h = out_para.detector_height; // output (corrected) detector size
     int num_projs = para.num_projs;
 
     std::vector<float> result(static_cast<size_t>(num_projs) * out_w * out_h);
 
-    // Reused across all batches, sized for the nominal batch_size -- the
-    // final (possibly smaller) batch just uses a prefix of these buffers.
+    // One pair of GPU buffers, reused for every batch instead of
+    // allocating a new pair each time. The last batch may be smaller and
+    // just uses part of them.
     cl::Buffer in_buf(ctx, CL_MEM_READ_ONLY, static_cast<size_t>(batch_size) * in_w * in_h * sizeof(float));
     cl::Buffer out_buf(ctx, CL_MEM_WRITE_ONLY, static_cast<size_t>(batch_size) * out_w * out_h * sizeof(float));
 
+    // One iteration per batch of projections: upload this batch's pixels,
+    // dispatch the kernel on them, read the corrected pixels back, repeat
+    // until every projection has been processed.
     for (int start = 0; start < num_projs; start += batch_size) {
-        int count = std::min(batch_size, num_projs - start);
+        int count = std::min(batch_size, num_projs - start);  // last batch may be smaller
 
         queue.enqueueWriteBuffer(in_buf, CL_TRUE, 0,
                                  static_cast<size_t>(count) * in_w * in_h * sizeof(float),

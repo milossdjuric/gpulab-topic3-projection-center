@@ -103,7 +103,7 @@ def compute_forward_geometry(
     # tan(arctan2(x_p, z_p)) == x_p / z_p exactly (tan has period pi, and
     # arctan2 vs atan(x_p/z_p) differ by exactly pi when z_p < 0), so this
     # is not an approximation. Ported from forward_search.cpp's identical
-    # optimization (see OPTIMIZATIONS.md).
+    # optimization.
     tan_theta0 = x_p / z_p
     return x0, y0, tan_theta0
 

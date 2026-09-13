@@ -31,6 +31,6 @@ executable('forward_search_resample',
 # pose in memory instead of through the two binaries above and a JSON file
 # in between. See src/pipeline_main.cpp's own comment for what this does
 # and does not eliminate.
-executable('forward_search_pipeline',
+executable('projection_center_pipeline_cpp',
   ['src/pipeline_main.cpp', 'src/forward_search.cpp', 'src/resample.cpp'],
   dependencies: [opencl, hdf5, boost])
