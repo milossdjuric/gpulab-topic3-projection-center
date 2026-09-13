@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import numpy as np
@@ -32,10 +33,15 @@ def run_search(
     device_index: int | None = None,
     cpp_mode: str = "buffer",
 ) -> SearchResult:
+    # Started before get_backend(): for opencl, building the backend is
+    # where device pick, context creation, and kernel compile happen, and
+    # the "search total" line below is meant to include that, matching
+    # projection-center-cpp/'s own "search total" line.
+    t0 = time.perf_counter()
     backend = get_backend(backend_name, platform_index=platform_index, device_index=device_index, cpp_mode=cpp_mode)
 
     if backend_name in ("cpp", "hybrid"):
-        # forward_search/ does its own HDF5 loading, sinogram build, and grid
+        # projection-center-cpp/ does its own HDF5 loading, sinogram build, and grid
         # search internally -- it isn't a drop-in kernel swap for the shared
         # sinogram/parameter_grid interface below, so it gets the raw file
         # path instead. hybrid's search is cpp's search (HybridBackend
@@ -45,7 +51,16 @@ def run_search(
         write_pose_json(output_pose_path, result)
         return result
 
+    verbose = backend_name == "opencl"
+
+    t_load0 = time.perf_counter()
     cb_params, sinogram_sum = build_sinogram_from_hdf5(data_path)
+    if verbose:
+        load_ms = (time.perf_counter() - t_load0) * 1000
+        print(f"Loaded {cb_params.num_projs} projections, "
+              f"{cb_params.detector_width}x{cb_params.detector_height} ({load_ms:.0f}ms)")
+        print(f"Device: {backend.device.name}")
+
     sinogram = build_sinogram(sinogram_sum)
     parameter_grid = build_parameter_grid(search_config)
     x0, y0, tan_theta0 = compute_forward_geometry(cb_params, parameter_grid)
@@ -70,6 +85,17 @@ def run_search(
         kernel_ms=artifacts.kernel_ms,
     )
     write_pose_json(output_pose_path, result)
+
+    if verbose:
+        total_ms = (time.perf_counter() - t0) * 1000
+        print(f"MSE:    {result.mse}")
+        print(f"xshift: {result.xshift * 1000.0:.6g} mm")
+        print(f"alpha:  {result.alpha * 180.0 / np.pi:.6g} deg")
+        print(f"beta:   {result.beta * 180.0 / np.pi:.6g} deg")
+        print(f"search kernel: {result.kernel_ms} ms")
+        print(f"search total: {total_ms:.0f} ms (device pick, context, "
+              f"sinogram build/upload, kernel compile, and the kernel itself)")
+
     return result
 
 
@@ -93,6 +119,7 @@ def run_resample(
         pose = read_pose_json(pose_path)
         return pose, Path(output_data_path)
 
+    t0 = time.perf_counter()
     cb_params = load_metadata(data_path)
     pose = read_pose_json(pose_path)
     output_params, rotation_matrix = compute_resample_geometry(
@@ -100,7 +127,14 @@ def run_resample(
         pose,
         resample_config.downsample_factor,
     )
+    # get_backend() is where device pick, context creation, and kernel
+    # compile happen for opencl, same as run_search() above.
     backend = get_backend(backend_name, platform_index=platform_index, device_index=device_index, cpp_mode=cpp_mode)
+
+    verbose = backend_name == "opencl"
+    if verbose:
+        print(f"Device: {backend.device.name}")
+
     initialize_resampled_dataset(output_data_path, output_params)
     for start, batch in stream_projection_batches(data_path, resample_config.batch_size):
         resampled = backend.resample(
@@ -111,6 +145,14 @@ def run_resample(
             batch_size=resample_config.batch_size,
         )
         write_projection_batch(output_data_path, start, resampled)
+
+    if verbose:
+        total_ms = (time.perf_counter() - t0) * 1000
+        print(f"Resampled {cb_params.num_projs} projections")
+        print(f"resample total: {total_ms:.0f} ms (device pick, context, "
+              f"kernel compile, and every batch)")
+        print(f"Wrote {output_data_path}")
+
     return pose, Path(output_data_path)
 
 
@@ -135,6 +177,9 @@ def run_pipeline(
         write_pose_json(output_pose_path, result)
         return result, Path(output_data_path)
 
+    verbose = backend_name == "opencl"
+    t0 = time.perf_counter() if verbose else None
+
     result = run_search(
         data_path=data_path,
         output_pose_path=output_pose_path,
@@ -154,4 +199,9 @@ def run_pipeline(
         device_index=device_index,
         cpp_mode=cpp_mode,
     )
+
+    if verbose:
+        total_ms = (time.perf_counter() - t0) * 1000
+        print(f"total (search + resample): {total_ms:.0f} ms")
+
     return result, output_path

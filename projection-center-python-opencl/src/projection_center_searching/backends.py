@@ -369,7 +369,7 @@ class OpenCLBackend:
         self.context = cl.Context(devices=[device])
         # PROFILING_ENABLE lets search() read back the search kernel's real
         # device-side execution time (kernel_ms) via event profiling, not a
-        # host-side wall-clock guess -- same approach as forward_search/'s
+        # host-side wall-clock guess -- same approach as projection-center-cpp/'s
         # own kernel_ms.
         self.queue = cl.CommandQueue(self.context, properties=cl.command_queue_properties.PROFILING_ENABLE)
         self.program = cl.Program(self.context, KERNEL_SOURCE).build()
@@ -531,12 +531,12 @@ class OpenCLBackend:
 
 
 def _repo_root() -> Path:
-    # .../projection-center/src/projection_center_searching/backends.py -> repo root
+    # .../projection-center-python-opencl/src/projection_center_searching/backends.py -> repo root
     return Path(__file__).resolve().parents[3]
 
 
 def _run_cpp_quietly(cmd: list[str]) -> None:
-    # forward_search/'s binaries print their own stage diagnostics
+    # projection-center-cpp/'s binaries print their own stage diagnostics
     # (device pick, sinogram build, kernel timings) to stderr -- captured
     # here rather than let through, so --backend cpp's output matches the
     # quiet, 3-line summary opencl/cpu already print (see cli.py's own
@@ -563,40 +563,40 @@ def _cpp_binary_path() -> Path:
     override = os.environ.get("FORWARD_SEARCH_CPP_BINARY")
     if override:
         return Path(override)
-    return _repo_root() / "forward_search" / "builddir" / _exe_name("forward_search")
+    return _repo_root() / "projection-center-cpp" / "builddir" / _exe_name("forward_search")
 
 
 def _cpp_kernel_path() -> Path:
     override = os.environ.get("FORWARD_SEARCH_CPP_KERNEL")
     if override:
         return Path(override)
-    return _repo_root() / "forward_search" / "kernels" / "forward_search.cl"
+    return _repo_root() / "projection-center-cpp" / "kernels" / "forward_search.cl"
 
 
 def _cpp_resample_binary_path() -> Path:
     override = os.environ.get("FORWARD_SEARCH_CPP_RESAMPLE_BINARY")
     if override:
         return Path(override)
-    return _repo_root() / "forward_search" / "builddir" / _exe_name("forward_search_resample")
+    return _repo_root() / "projection-center-cpp" / "builddir" / _exe_name("forward_search_resample")
 
 
 def _cpp_resample_kernel_path() -> Path:
     override = os.environ.get("FORWARD_SEARCH_CPP_RESAMPLE_KERNEL")
     if override:
         return Path(override)
-    return _repo_root() / "forward_search" / "kernels" / "resample.cl"
+    return _repo_root() / "projection-center-cpp" / "kernels" / "resample.cl"
 
 
 def _cpp_pipeline_binary_path() -> Path:
     override = os.environ.get("FORWARD_SEARCH_CPP_PIPELINE_BINARY")
     if override:
         return Path(override)
-    return _repo_root() / "forward_search" / "builddir" / _exe_name("projection_center_pipeline_cpp")
+    return _repo_root() / "projection-center-cpp" / "builddir" / _exe_name("projection_center_pipeline_cpp")
 
 
 class CppBackend:
     """Delegates both forward search and resampling to this repo's own
-    C++/OpenCL implementation (forward_search/builddir/forward_search and
+    C++/OpenCL implementation (projection-center-cpp/builddir/forward_search and
     forward_search_resample) by invoking them as subprocesses, instead of
     reimplementing their kernels in Python. This is the only backend that
     isn't a Python/PyOpenCL implementation of its own -- it's this repo's
@@ -612,7 +612,7 @@ class CppBackend:
         if not binary.exists():
             raise RuntimeError(
                 f"cpp backend binary not found at {binary}. Build it first: "
-                "cd forward_search && meson setup builddir && meson compile -C builddir "
+                "cd projection-center-cpp && meson setup builddir && meson compile -C builddir "
                 "(or set FORWARD_SEARCH_CPP_BINARY to point elsewhere)."
             )
 
@@ -667,7 +667,7 @@ class CppBackend:
         if not binary.exists():
             raise RuntimeError(
                 f"cpp resample binary not found at {binary}. Build it first: "
-                "cd forward_search && meson setup builddir && meson compile -C builddir "
+                "cd projection-center-cpp && meson setup builddir && meson compile -C builddir "
                 "(or set FORWARD_SEARCH_CPP_RESAMPLE_BINARY to point elsewhere)."
             )
         cmd = [
@@ -693,7 +693,7 @@ class CppBackend:
         # binary invocations search_from_file()+resample_from_file() use,
         # which round-trip the pose through a JSON file and each pay their
         # own process/HDF5-load/kernel-compile cost. See
-        # forward_search/src/pipeline_main.cpp.
+        # projection-center-cpp/src/pipeline_main.cpp.
         if search_config.sample_count != 1000 or search_config.sample_angle_range_deg != 30.0:
             raise ValueError(
                 "cpp backend hardcodes sample_count=1000 and sample_angle_range_deg=30.0 "
@@ -704,7 +704,7 @@ class CppBackend:
         if not binary.exists():
             raise RuntimeError(
                 f"cpp pipeline binary not found at {binary}. Build it first: "
-                "cd forward_search && meson setup builddir && meson compile -C builddir "
+                "cd projection-center-cpp && meson setup builddir && meson compile -C builddir "
                 "(or set FORWARD_SEARCH_CPP_PIPELINE_BINARY to point elsewhere)."
             )
 
@@ -743,7 +743,7 @@ class CppBackend:
 
 
 class HybridBackend:
-    """Search via forward_search/'s cpp binary (CppBackend), resample via
+    """Search via projection-center-cpp/'s cpp binary (CppBackend), resample via
     this package's own opencl kernel (OpenCLBackend) -- a fourth backend
     choice, not a blend of the other two's code. Motivated by measuring that
     which of cpp's or opencl's *search* kernel is faster is dataset-dependent,

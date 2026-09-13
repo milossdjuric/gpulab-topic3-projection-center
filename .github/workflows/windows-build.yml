@@ -1,10 +1,10 @@
-name: forward_search Windows build (MinGW-w64)
+name: projection-center-cpp Windows build (MinGW-w64)
 
-# First attempt at answering "does forward_search/ build on Windows at
+# First attempt at answering "does projection-center-cpp/ build on Windows at
 # all" (see milos/windows-support branch). This only tests build/link, not
 # running a real search, GitHub's windows-latest runners don't reliably
 # have a usable OpenCL device. It uses MinGW-w64 (via MSYS2) rather than
-# MSVC on purpose: forward_search/meson.build and src/backend.py both hand
+# MSVC on purpose: projection-center-cpp/meson.build and src/backend.py both hand
 # GCC/Clang-style flags to the compiler/linker (-O3, -lboost_json,
 # -lOpenCL), which MinGW-w64's gcc accepts as-is but MSVC's cl.exe does
 # not. This workflow is UNVERIFIED until it actually runs once on GitHub
@@ -51,17 +51,17 @@ jobs:
 
       - name: meson setup
         run: |
-          cd forward_search
+          cd projection-center-cpp
           meson setup builddir
 
       - name: meson compile
         run: |
-          cd forward_search
+          cd projection-center-cpp
           meson compile -C builddir
 
       - name: list build output
         run: |
-          cd forward_search
+          cd projection-center-cpp
           ls -la builddir/forward_search.exe builddir/forward_search_resample.exe
 
       - name: bundle runtime DLLs for standalone testing
@@ -70,7 +70,7 @@ jobs:
         # so they won't run outside an MSYS2 shell (or under Wine, or on a
         # plain Windows machine) unless those DLLs travel with them.
         run: |
-          cd forward_search
+          cd projection-center-cpp
           mkdir dist
           cp builddir/forward_search.exe builddir/forward_search_resample.exe dist/
           ldd builddir/forward_search.exe builddir/forward_search_resample.exe \
@@ -78,12 +78,12 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: forward_search-windows
-          path: forward_search/dist/
+          name: projection-center-cpp-windows
+          path: projection-center-cpp/dist/
 
   # Second job: does the actual `projection-center` CLI (the thing
   # RUNNING.md/run_all_*.sh actually use) work end to end on Windows, not
-  # just the raw forward_search/ C++ build. Uses a normal native Windows
+  # just the raw projection-center-cpp/ C++ build. Uses a normal native Windows
   # Python (not MSYS2's), since pyopencl's published wheels target that,
   # not MSYS2's Python build.
   python-cli:
@@ -111,10 +111,10 @@ jobs:
           curl -sSL -o /mingw64/include/CL/opencl.hpp \
             https://raw.githubusercontent.com/KhronosGroup/OpenCL-CLHPP/main/include/CL/opencl.hpp
 
-      - name: build forward_search (needed by --backend cpp)
+      - name: build projection-center-cpp (needed by --backend cpp)
         shell: msys2 {0}
         run: |
-          cd forward_search
+          cd projection-center-cpp
           meson setup builddir
           meson compile -C builddir
 
@@ -124,11 +124,11 @@ jobs:
 
       - name: install projection-center
         shell: pwsh
-        run: pip install -e projection-center
+        run: pip install -e projection-center-python-opencl
 
       - name: make synthetic dataset
         shell: pwsh
-        run: python forward_search/tests/make_synth_hdf5.py synth.hdf5
+        run: python projection-center-cpp/tests/make_synth_hdf5.py synth.hdf5
 
       - name: projection-center devices
         shell: pwsh

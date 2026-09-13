@@ -1,4 +1,4 @@
-project('forward_search', 'cpp', default_options: ['cpp_std=c++17', 'buildtype=release'])
+project('projection_center_cpp', 'cpp', default_options: ['cpp_std=c++17', 'buildtype=release'])
 
 opencl = dependency('OpenCL')
 hdf5   = dependency('hdf5', language: 'cpp')
