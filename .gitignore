@@ -11,5 +11,6 @@ data/
 outputs/
 .venv/
 
-# KDevelop machine-local session state (launch configs with local absolute paths)
-.kdev4/
+# Intel NEO OpenCL driver debug dump (only appears when NEOReadDebugKeys/
+# PrintDebugSettings env vars are set)
+igdrcl_dumped.config

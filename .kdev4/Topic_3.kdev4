@@ -1,0 +1,34 @@
+[Launch]
+Launch Configurations=Launch Configuration 0
+
+[Launch][Launch Configuration 0]
+Configured Launch Modes=execute
+Configured Launchers=nativeAppLauncher
+Name=projection_center_cpp
+Type=Native Application
+
+[Launch][Launch Configuration 0][Data]
+Arguments=--data /home/milossdjuric/Downloads/Topic_3/data/proj_shepplogan512.hdf5 --search-kernel /home/milossdjuric/Downloads/Topic_3/projection-center-cpp/kernels/forward_search.cl --resample-kernel /home/milossdjuric/Downloads/Topic_3/projection-center-cpp/kernels/resample.cl --output-pose /tmp/kdev_cpp_pose.h5 --output-data /tmp/kdev_cpp_resampled.hdf5
+Dependencies=@Variant(\x00\x00\x00\t\x00\x00\x00\x00\x01\x00\x00\x00\x0b\x00\x00\x00\x00\x02\x00\x00\x00\x0e\x00T\x00o\x00p\x00i\x00c\x00_\x003\x00\x00\x00.\x00f\x00o\x00r\x00w\x00a\x00r\x00d\x00_\x00s\x00e\x00a\x00r\x00c\x00h\x00_\x00p\x00i\x00p\x00e\x00l\x00i\x00n\x00e)
+Dependency Action=Build
+EnvironmentGroup=
+Executable=file:///home/milossdjuric/Downloads/Topic_3/build/projection_center_pipeline_cpp
+External Terminal=konsole --noclose --workdir %workdir -e %exe
+Kill Before Executing Again=4194304
+Project Target=Topic_3,forward_search
+Use External Terminal=false
+Working Directory=file:///home/milossdjuric/Downloads/Topic_3
+isExecutable=true
+
+[MesonManager]
+Current Build Directory Index=0
+Number of Build Directories=1
+
+[MesonManager][BuildDir 0]
+Additional meson arguments=
+Build Directory Path=/home/milossdjuric/Downloads/Topic_3/build
+Meson Generator Backend=ninja
+Meson executable=/usr/bin/meson
+
+[Project]
+VersionControlSupport=kdevgit
