@@ -38,8 +38,15 @@ Longer write-ups live as PDFs under `repo_docs/`:
   those numbers: eliminating redundant `tan()`/`atan()` calls, fixing a
   missing `-O3`/`release` compile flag, resample buffer/kernel caching,
   and a `--batch-size` sweep, each fix measured before/after.
-- **`repo_docs/running.pdf`**: a practical command reference across all
-  three backends (search/resample/pipeline for `opencl`/`cpu`/`cpp`).
+- **`repo_docs/running.pdf`**: a practical command reference: setup, the
+  search/resample/pipeline command for every backend (`opencl`/`cpu`/`cpp`),
+  the pybind11 Python interface, the reference, validation, benchmarks. Its
+  source is `repo_docs/running.html`: edit that, then regenerate the PDF with
+  the command in its header comment.
+- **`repo_docs/pybind-interface.md`**: how to run the course-required Python
+  interface (pybind11 / `torch.utils.cpp_extension`): requirements, the
+  one-command example, calling it from your own code, function reference,
+  tests, timing, troubleshooting. See "Python Interface (pybind11)" below.
 - **`repo_docs/kdevelop-setup.pdf`**: the same KDevelop steps as the
   section below.
 - **`repo_docs/windows-support.pdf`**: Windows build/run status, see the
@@ -57,13 +64,17 @@ Longer write-ups live as PDFs under `repo_docs/`:
 |   |-- Topic_3_resampling.py
 |   `-- run_reference_pipeline.py     runs both of the above, one command
 |-- projection-center-cpp/                   this repo's C++/OpenCL implementation
+|   |-- backend.py                     pybind11 Python interface: `from backend import _backend`
+|   |-- run_pybind.py                  Python reads HDF5 -> _backend.search/resample -> writes HDF5
 |   |-- src/
 |   |   |-- forward_search.cpp/.hpp     forward search host code
 |   |   |-- resample.cpp/.hpp           resampling host code
-|   |   |-- main.cpp / resample_main.cpp / pipeline_main.cpp  CLI entrypoints
-|   |   `-- backend.py / pybind_backend.cpp  pybind11 Python interface
+|   |   |-- ported_backends.cpp/.hpp    C++ ports of the opencl + cpu backends (pybind only)
+|   |   |-- pybind_backend.cpp          the pybind11 module (search, resample)
+|   |   |-- stage_timing.hpp            the shared read/compute/write timing line
+|   |   `-- main.cpp / resample_main.cpp / pipeline_main.cpp  CLI entrypoints
 |   |-- kernels/*.cl                   OpenCL C kernels
-|   |-- tests/                         smoke + CLI-vs-backend regression tests
+|   |-- tests/                         smoke + CLI-vs-backend + ported-backend regression tests
 |   `-- README.md
 |-- projection-center-python-opencl/                fetched Python/PyOpenCL implementation
 |   |-- pyproject.toml
@@ -72,6 +83,7 @@ Longer write-ups live as PDFs under `repo_docs/`:
 |       |-- backends.py                CpuBackend, OpenCLBackend, CppBackend
 |       |-- cli.py                     the `projection-center` command
 |       |-- geometry.py, hdf5_io.py, models.py, pipeline.py
+|       |-- timing.py                  read/write time accounting for the timing line
 |       `-- __init__.py, __main__.py
 |-- docs/                             (gitignored)
 |   |-- course/                        course-provided PDFs (exercise sheets, etc.)
@@ -79,9 +91,12 @@ Longer write-ups live as PDFs under `repo_docs/`:
 |-- repo_docs/                        the report PDFs below, tracked in git
 |   |-- benchmark-report.pdf           opencl vs cpp timing + reference speedup
 |   |-- optimizations-report.pdf       performance investigation
-|   |-- running.pdf                    practical how-to, all backends
+|   |-- running.pdf                    practical how-to, all backends + pybind
+|   |-- running.html                   source of running.pdf
+|   |-- pybind-interface.md            how to run the pybind11 Python interface
 |   |-- kdevelop-setup.pdf             KDevelop project setup guide
 |   `-- windows-support.pdf            Windows build/run status
+|-- benchmark_pybind.py              10x timing of every backend (pybind + CLI)
 |-- scripts/
 |   |-- run_all_128.sh                 full run against the 128px dataset
 |   `-- run_all_512.sh                 full run against the 512px dataset
@@ -96,7 +111,8 @@ Longer write-ups live as PDFs under `repo_docs/`:
 
 - Python 3.10 or newer, `numpy`, `h5py`, `pyopencl`, `mako`
 - A C++17 compiler, Meson + Ninja, HDF5 C++ headers, Boost (`program_options`, JSON)
-- An installed OpenCL runtime
+- An installed OpenCL runtime, plus the OpenCL C++ header (`opencl-clhpp-headers` on Ubuntu/Debian)
+- For the pybind11 Python interface: `torch` (brings pybind11), `numpy`, `h5py`, `g++`, `ninja`; see "Python Interface (pybind11)"
 
 `projection-center-cpp/`'s C++ dependencies are declared in `projection-center-cpp/meson.build`;
 `projection-center-python-opencl/`'s Python dependencies in `projection-center-python-opencl/pyproject.toml`.
@@ -120,8 +136,16 @@ per the course rubric, run as two separate steps:
 
 ```bash
 python3 reference/Topic_3_forwardsearching.py --data data/proj_shepplogan128.hdf5
-python3 reference/Topic_3_resampling.py --data data/proj_shepplogan128.hdf5 --pose real_cb_pose.json
+python3 reference/Topic_3_resampling.py --data data/proj_shepplogan128.hdf5
 ```
+
+The second step has no `--pose` flag: it always reads the `./real_cb_pose.json`
+the first step wrote.
+
+On `proj_shepplogan128.hdf5` the first step stops with `UnboundLocalError`:
+that's the reference's own known out-of-bounds bug, not something in this
+repo. `run_reference_pipeline.py` below patches it in memory (the files on
+disk stay untouched) and works on that dataset.
 
 For both steps in one command, use `reference/run_reference_pipeline.py`.
 It calls the same two unmodified reference functions directly instead of
@@ -194,6 +218,159 @@ projection-center pipeline --data data/proj_shepplogan128.hdf5 --output-pose pos
 Add `--backend opencl` (default), `--backend cpu`, or `--backend cpp` to any
 command above to pick which implementation runs it. All three find the same
 pose and produce matching resampled output.
+
+## Python Interface (pybind11)
+
+The course requires the OpenCL code to be callable from Python through
+`torch.utils.cpp_extension` + pybind11: Python reads the data, passes it into
+the interface, and gets the results back. `projection-center-cpp/` provides
+this, laid out like the course's `pybindextension.zip` example (`backend.py`
+next to a `src/` folder). No build step: the first import compiles the module
+and caches it.
+
+How it maps to the course's example:
+
+| `pybindextension.zip` | `projection-center-cpp/` |
+|---|---|
+| `backend.py`: `_backend = load(name='add_test', sources=[src/add_test.cpp])` | `backend.py`: `_backend = load(name="forward_search_backend", sources=[src/pybind_backend.cpp, ...])`, plus `-lOpenCL`, the kernel folder and `-O3` |
+| `src/add_test.cpp`: `PYBIND11_MODULE(add_test, m)`, `m.def("add", ...)` | `src/pybind_backend.cpp`: `PYBIND11_MODULE(forward_search_backend, m)`, `m.def("search", ...)`, `m.def("resample", ...)` |
+| `from backend import _backend`, then `_backend.add(0.2)` | `from backend import _backend`, then `_backend.search(...)` and `_backend.resample(...)` |
+
+Python reads the HDF5 file, passes the NumPy arrays into `_backend`, and gets
+the pose (a dict) and the resampled projections (a NumPy array) back; the C++
+side never opens a file.
+
+Needs:
+
+- Python: `torch` (which also brings the pybind11 headers; a CPU-only build
+  is enough), `numpy`, `h5py`: `python3 -m pip install torch numpy h5py`
+- `g++` and `ninja`, which `torch.utils.cpp_extension` compiles with
+- OpenCL: the C++ header `CL/opencl.hpp`, the loader library, and a GPU
+  driver. On Ubuntu/Debian: `sudo apt install opencl-clhpp-headers
+  ocl-icd-opencl-dev` plus your vendor driver (e.g. `intel-opencl-icd`)
+
+No HDF5 or Boost development packages are needed for this part: Python does
+all the file reading and writing.
+
+Run the whole flow (read HDF5 -> search -> resample -> write HDF5):
+
+```bash
+cd projection-center-cpp
+python3 run_pybind.py --data ../data/proj_shepplogan128.hdf5
+```
+
+All `run_pybind.py` commands below are run from inside
+`projection-center-cpp/`. From the repo root, use
+`python3 projection-center-cpp/run_pybind.py --data data/proj_shepplogan128.hdf5`
+instead.
+
+This writes the found pose to `runs/real_cb_pose.h5` and the corrected
+projections to `runs/projs_resample.h5`. Every backend prints the same
+report: the stage log (device, sinogram, grid, kernel times), the pose,
+`search total`, `resample total`, and at the end
+
+```text
+timing (excluding imports): read 41 ms | compute 570 ms | write 71 ms | I/O 112 ms | compute+I/O 682 ms
+total run: 7.0 s (including import and file I/O)
+```
+
+plus the one-off `import (torch + pybind module load)` time at the start
+(~5 s, mostly `import torch`). The very first run also compiles the module
+(about 40 s here); later runs reuse the compiled copy. The `No CUDA runtime is found` warning is
+harmless, ignore it.
+
+Other datasets:
+
+```bash
+python3 run_pybind.py --data ../data/proj_shepplogan512.hdf5    # 512px
+```
+
+Other backends:
+
+```bash
+python3 run_pybind.py --data ../data/proj_shepplogan128.hdf5 --backend opencl
+python3 run_pybind.py --data ../data/proj_shepplogan128.hdf5 --backend cpu
+```
+
+Search only:
+
+```bash
+python3 run_pybind.py --data ../data/proj_shepplogan128.hdf5 --skip-resample
+```
+
+Every backend on both datasets, from the repo root:
+
+```bash
+# 128px dataset
+python3 projection-center-cpp/run_pybind.py --data data/proj_shepplogan128.hdf5 --backend cpp
+python3 projection-center-cpp/run_pybind.py --data data/proj_shepplogan128.hdf5 --backend opencl
+python3 projection-center-cpp/run_pybind.py --data data/proj_shepplogan128.hdf5 --backend cpu
+
+# 512px dataset
+python3 projection-center-cpp/run_pybind.py --data data/proj_shepplogan512.hdf5 --backend cpp
+python3 projection-center-cpp/run_pybind.py --data data/proj_shepplogan512.hdf5 --backend opencl
+python3 projection-center-cpp/run_pybind.py --data data/proj_shepplogan512.hdf5 --backend cpu
+```
+
+Each run writes to `runs/real_cb_pose.h5` and `runs/projs_resample.h5`, so
+the next run overwrites them. To keep all six results, give each run its own
+output names:
+
+```bash
+python3 projection-center-cpp/run_pybind.py --data data/proj_shepplogan128.hdf5 --backend cpp    --output runs/pybind/128_cpp_pose.h5    --resample-output runs/pybind/128_cpp_resampled.h5
+python3 projection-center-cpp/run_pybind.py --data data/proj_shepplogan128.hdf5 --backend opencl --output runs/pybind/128_opencl_pose.h5 --resample-output runs/pybind/128_opencl_resampled.h5
+python3 projection-center-cpp/run_pybind.py --data data/proj_shepplogan128.hdf5 --backend cpu    --output runs/pybind/128_cpu_pose.h5    --resample-output runs/pybind/128_cpu_resampled.h5
+python3 projection-center-cpp/run_pybind.py --data data/proj_shepplogan512.hdf5 --backend cpp    --output runs/pybind/512_cpp_pose.h5    --resample-output runs/pybind/512_cpp_resampled.h5
+python3 projection-center-cpp/run_pybind.py --data data/proj_shepplogan512.hdf5 --backend opencl --output runs/pybind/512_opencl_pose.h5 --resample-output runs/pybind/512_opencl_resampled.h5
+python3 projection-center-cpp/run_pybind.py --data data/proj_shepplogan512.hdf5 --backend cpu    --output runs/pybind/512_cpu_pose.h5    --resample-output runs/pybind/512_cpu_resampled.h5
+```
+
+Expected pose on every backend: 40 mm / −3° / 4° on 128px, 35 mm / −1° / 10°
+on 512px.
+
+Or from your own Python code (from inside `projection-center-cpp/`):
+
+```python
+import h5py
+from backend import _backend
+
+with h5py.File("../data/proj_shepplogan128.hdf5", "r") as f:
+    projs = f["Projection"][()]
+    SDD, SOD, pixel_size = f["SDD"][()], f["SOD"][()], f["pixelSize"][()]
+H, W = projs.shape[1:]
+
+pose = _backend.search(projs, SDD, SOD, pixel_size, W, H,
+                       xshift=40.0, alpha=10.0, beta=10.0,              # ± range: mm, deg, deg
+                       xshift_step=1.0, alpha_step=1.0, beta_step=1.0)
+out = _backend.resample(projs, SDD, SOD, pixel_size,
+                        xshift=pose["xshift"], alpha=pose["alpha"], beta=pose["beta"],
+                        center_x=pose["center_x"], center_y=pose["center_y"])
+corrected = out["projections"]    # numpy array, (num_projs, H, W)
+```
+
+Both functions take `backend="cpp"` (default: our own OpenCL kernels),
+`"opencl"` (the Python package's OpenCL kernels, run from C++) or `"cpu"`
+(the Python package's NumPy CPU backend, ported to C++). All three give the
+same pose.
+
+Tests, from `projection-center-cpp/`, each printing `... PASS`:
+
+```bash
+python3 tests/test_backend_smoke.py              # the module builds, loads and finds a sane pose
+python3 tests/test_ported_backends.py            # backend="opencl"/"cpu" give bit-identical results to
+                                                 # projection-center-python-opencl's own opencl/cpu backends
+                                                 # (needs that package installed, see "OpenCL Setup")
+
+# these two compare against the C++ command-line programs, so build those first:
+#   meson setup builddir && meson compile -C builddir
+python3 tests/test_cli_vs_backend.py             # pybind search == command-line search
+python3 tests/test_resample_cli_vs_backend.py    # pybind resample == command-line resample, bit-identical
+```
+
+Timing: `python3 benchmark_pybind.py` from the repo root.
+
+Full manual (every option, function reference, troubleshooting):
+`repo_docs/pybind-interface.md`.
 
 ## Output Files
 
@@ -333,9 +510,9 @@ the Python package.
 
 ### Linux
 
-Install your vendor OpenCL loader and runtime first (e.g. Ubuntu/Debian:
-`ocl-icd-opencl-dev` plus the vendor runtime package, `intel-opencl-icd`
-for Intel iGPUs). Then:
+Install your vendor OpenCL loader, the OpenCL C++ header and the runtime
+first (e.g. Ubuntu/Debian: `ocl-icd-opencl-dev`, `opencl-clhpp-headers`, plus
+the vendor runtime package, `intel-opencl-icd` for Intel iGPUs). Then:
 
 ```bash
 # C++ side

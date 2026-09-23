@@ -45,6 +45,11 @@ import numpy as np
 
 REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
 
+# Seconds the reference functions below spend reading the input HDF5 and
+# writing their outputs, so reference/run_reference_pipeline.py can print
+# the same read/compute/write timing line as every other implementation.
+REF_IO = {"read": 0.0, "write": 0.0}
+
 
 def run_timed(cmd, cwd=None):
     t0 = time.time()
@@ -89,7 +94,7 @@ def run_reference_search(data_path, out_dir, xshift=40.0, alpha=10.0, beta=10.0,
     pose_path = os.path.join(out_dir, "pose.json")
     t0 = time.time()
     run_corrected_reference(data_path, pose_path, xshift, alpha, beta,
-                             xshift_step, alpha_step, beta_step)
+                             xshift_step, alpha_step, beta_step, io_times=REF_IO)
     elapsed = time.time() - t0
     with open(pose_path) as f:
         pose = json.load(f)
@@ -105,8 +110,10 @@ def run_reference_resample(data_path, cb_para, pose, out_dir):
         sys.path.insert(0, reference_dir)
     import Topic_3_resampling as ref_mod
 
+    t_read = time.time()
     with h5py.File(data_path, "r") as f:
         projs = f["Projection"][()]
+    REF_IO["read"] += time.time() - t_read
 
     t0 = time.time()
     real_cb_para = ref_mod.get_cb_para(cb_para, pose, downsample_factor=1)
@@ -116,6 +123,7 @@ def run_reference_resample(data_path, cb_para, pose, out_dir):
         real_projs[i_proj] = ref_mod.get_real_projection(cb_para, real_cb_para, rotation_matrix, projs[i_proj])
     elapsed = time.time() - t0
 
+    t_write = time.time()
     out_path = os.path.join(out_dir, "resampled.hdf5")
     with h5py.File(out_path, "w") as file:
         file.create_dataset("pixelSize", dtype=np.float64, data=real_cb_para["pixel_size"])
@@ -133,6 +141,7 @@ def run_reference_resample(data_path, cb_para, pose, out_dir):
             shape=(int(real_cb_para["num_projs"]), int(real_cb_para["detector_height"]), int(real_cb_para["detector_width"])),
         )
         projection[:, :, :] = real_projs
+    REF_IO["write"] += time.time() - t_write
 
     print(f"  resample done in {elapsed:.1f}s")
     return elapsed, out_path
@@ -143,7 +152,9 @@ def run_reference(data_path, out_dir, skip_resample):
     if skip_resample:
         return search_elapsed, pose, False
 
+    t_read = time.time()
     cb_para = load_cb_para(data_path)
+    REF_IO["read"] += time.time() - t_read
     resample_elapsed, _ = run_reference_resample(data_path, cb_para, pose, out_dir)
     return search_elapsed + resample_elapsed, pose, True
 
@@ -180,7 +191,10 @@ def fmt_pose(pose):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--data", default="data/projs_change.hdf5")
-    ap.add_argument("--output-dir", default="runs/benchmark_all")
+    ap.add_argument("--output-dir", default=None,
+                    help="Where to save each run's pose/output files (default: a new "
+                         "runs/benchmark_all/<timestamp>/ per run, so earlier results "
+                         "are never overwritten).")
     ap.add_argument("--skip-reference", action="store_true",
                      help="Skip the raw reference entirely (search + resample).")
     ap.add_argument("--skip-reference-resample", action="store_true",
@@ -189,6 +203,8 @@ def main():
     args = ap.parse_args()
 
     data_path = os.path.abspath(args.data)
+    if args.output_dir is None:
+        args.output_dir = time.strftime("runs/benchmark_all/%Y%m%d-%H%M%S")
     out_root = os.path.join(REPO_ROOT, args.output_dir)
 
     rows = []  # (label, elapsed, pose, had_resample)

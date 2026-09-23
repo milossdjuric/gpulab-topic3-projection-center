@@ -22,7 +22,9 @@ import tempfile
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO_ROOT)
 
-from benchmark_backends import run_reference
+import time
+
+from benchmark_backends import REF_IO, run_reference
 
 
 def main():
@@ -37,14 +39,26 @@ def main():
     os.makedirs(os.path.dirname(output_pose) or ".", exist_ok=True)
     os.makedirs(os.path.dirname(output_data) or ".", exist_ok=True)
 
+    t0 = time.time()
     with tempfile.TemporaryDirectory() as tmp_dir:
         elapsed, pose, had_resample = run_reference(os.path.abspath(args.data), tmp_dir, False)
+        # The outputs are written to a temporary folder first; moving them
+        # to their final place is part of writing them.
+        t_move = time.time()
         shutil.move(os.path.join(tmp_dir, "pose.json"), output_pose)
         shutil.move(os.path.join(tmp_dir, "resampled.hdf5"), output_data)
+        REF_IO["write"] += time.time() - t_move
+    total = time.time() - t0
 
     print(f"search+resample done in {elapsed:.1f}s")
     print(f"output pose: {output_pose}")
     print(f"output hdf5: {output_data}")
+    # Same line, same format, as every other implementation in this project.
+    read_ms, write_ms = REF_IO["read"] * 1000, REF_IO["write"] * 1000
+    compute_ms = total * 1000 - read_ms - write_ms
+    print(f"timing (excluding imports): read {read_ms:.0f} ms | compute {compute_ms:.0f} ms"
+          f" | write {write_ms:.0f} ms | I/O {read_ms + write_ms:.0f} ms"
+          f" | compute+I/O {read_ms + compute_ms + write_ms:.0f} ms")
 
 
 if __name__ == "__main__":

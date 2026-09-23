@@ -34,3 +34,21 @@ ResampleOutput computeResample(const CbPara& para,
                                int downsample_factor,
                                const std::string& kernel_path,
                                int batch_size = 16);
+
+// The corrected geometry computeResample() produces for this pose and
+// downsample factor, without running the resample itself. Lets a caller
+// find out the output size first and allocate the output memory itself.
+CbPara resampleOutputGeometry(const CbPara& para, const ResamplePose& pose, int downsample_factor);
+
+// Same as computeResample(), but reads the projections from a raw pointer
+// and writes the corrected images straight into out (which must hold
+// num_projs x out_height x out_width floats, sizes from
+// resampleOutputGeometry()). The pybind11 interface uses this one so the
+// input and output NumPy arrays are used directly, no ~750MB copies.
+void computeResampleInto(const CbPara& para,
+                         const float* projs,
+                         const ResamplePose& pose,
+                         int downsample_factor,
+                         const std::string& kernel_path,
+                         int batch_size,
+                         float* out);

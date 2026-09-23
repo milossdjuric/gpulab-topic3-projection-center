@@ -19,6 +19,7 @@
 #include <boost/program_options.hpp>
 #include "forward_search.hpp"
 #include "resample.hpp"
+#include "stage_timing.hpp"
 
 namespace po = boost::program_options;
 
@@ -178,7 +179,9 @@ int main(int argc, char* argv[]) {
                                  vm["mode"].as<std::string>());
         auto t_search_done = std::chrono::steady_clock::now();
 
+        auto t_write0 = std::chrono::steady_clock::now();
         writePoseHDF5(vm["output-pose"].as<std::string>(), pose);
+        double write_ms = msSince(t_write0);
         std::cerr << "MSE:    " << pose.mse << "\n";
         std::cerr << "xshift: " << pose.xshift * 1000.0 << " mm\n";
         std::cerr << "alpha:  " << pose.alpha / PI * 180.0 << " deg\n";
@@ -197,21 +200,28 @@ int main(int argc, char* argv[]) {
         rpose.alpha     = pose.alpha;
         rpose.beta      = pose.beta;
 
+        auto t_resample0 = std::chrono::steady_clock::now();
         ResampleOutput result = computeResample(para, projs, rpose,
                                                 vm["downsample"].as<int>(),
                                                 vm["resample-kernel"].as<std::string>(),
                                                 vm["batch-size"].as<int>());
         auto t_resample_done = std::chrono::steady_clock::now();
+        double compute_ms = std::chrono::duration<double, std::milli>(t_search_done - t_load1).count()
+                          + std::chrono::duration<double, std::milli>(t_resample_done - t_resample0).count();
         std::cerr << "resample total: "
                   << std::chrono::duration_cast<std::chrono::milliseconds>(t_resample_done - t_search_done).count()
                   << " ms (device pick, context, kernel compile, and every batch)\n";
 
+        auto t_write1 = std::chrono::steady_clock::now();
         writeResampledHDF5(vm["output-data"].as<std::string>(), result.para, result.projs);
+        write_ms += msSince(t_write1);
         auto t_done = std::chrono::steady_clock::now();
         std::cerr << "Wrote " << vm["output-data"].as<std::string>() << "\n";
         std::cerr << "total (search + resample): "
                   << std::chrono::duration_cast<std::chrono::milliseconds>(t_done - t_load1).count()
                   << " ms\n";
+        printTimingLine(std::chrono::duration<double, std::milli>(t_load1 - t_load0).count(),
+                        compute_ms, write_ms);
 
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << "\n";

@@ -51,3 +51,18 @@ CbPose computeCOR(const CbPara& para,
                   const SearchArgs& args,
                   const std::string& kernel_path,
                   const std::string& mode = "image");
+
+// Same as above, but reads the projections straight from a raw pointer
+// (num_projs x detector_height x detector_width floats) instead of a
+// vector. The pybind11 interface uses this one so it can hand over the
+// NumPy array's own memory without copying ~750MB into a vector first.
+CbPose computeCOR(const CbPara& para,
+                  const float* projs,
+                  const SearchArgs& args,
+                  const std::string& kernel_path,
+                  const std::string& mode = "image");
+
+// Adds every projection together into one image and scales it to 0..1.
+// Shared by every search implementation in this project (see
+// forward_search.cpp for the details).
+std::vector<float> buildSinogram(const float* projs, int num_projs, int H, int W);

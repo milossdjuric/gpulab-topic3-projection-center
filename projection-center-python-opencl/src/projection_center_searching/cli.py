@@ -1,11 +1,26 @@
 from __future__ import annotations
 
 import argparse
+import time
 from pathlib import Path
 
 from .backends import list_opencl_devices
 from .pipeline import run_pipeline, run_resample, run_search
 from .models import ResampleConfig, SearchConfig
+from .timing import IO, format_timing_line
+
+
+def _timed(run):
+    """Runs one command's work and prints the shared timing line after it:
+    read/write come from hdf5_io.py (and the cpp binaries' own reports),
+    everything else in between counts as compute. Imports happened before
+    this and aren't included."""
+    IO.reset()
+    t0 = time.perf_counter()
+    out = run()
+    total = time.perf_counter() - t0
+    print(format_timing_line(IO.read * 1000, (total - IO.read - IO.write) * 1000, IO.write * 1000))
+    return out
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -107,7 +122,7 @@ def _handle_devices(args: argparse.Namespace) -> int:
 
 
 def _handle_search(args: argparse.Namespace) -> int:
-    result = run_search(
+    result = _timed(lambda: run_search(
         data_path=args.data,
         output_pose_path=args.output_pose,
         search_config=_build_search_config(args),
@@ -115,7 +130,7 @@ def _handle_search(args: argparse.Namespace) -> int:
         platform_index=args.platform_index,
         device_index=args.device_index,
         cpp_mode=args.cpp_mode,
-    )
+    ))
     # opencl already printed its own detailed summary (Loaded/Device/MSE/
     # xshift/alpha/beta/search kernel/search total), matching
     # projection-center-cpp/'s own output, inside run_search() itself.
@@ -130,7 +145,7 @@ def _handle_search(args: argparse.Namespace) -> int:
 
 
 def _handle_resample(args: argparse.Namespace) -> int:
-    pose, output_path = run_resample(
+    pose, output_path = _timed(lambda: run_resample(
         data_path=args.data,
         pose_path=args.pose,
         output_data_path=args.output_data,
@@ -139,7 +154,7 @@ def _handle_resample(args: argparse.Namespace) -> int:
         platform_index=args.platform_index,
         device_index=args.device_index,
         cpp_mode=args.cpp_mode,
-    )
+    ))
     # opencl already printed its own detailed summary (Device/Resampled/
     # resample total/Wrote), matching projection-center-cpp/'s own output,
     # inside run_resample() itself.
@@ -150,7 +165,7 @@ def _handle_resample(args: argparse.Namespace) -> int:
 
 
 def _handle_pipeline(args: argparse.Namespace) -> int:
-    result, output_path = run_pipeline(
+    result, output_path = _timed(lambda: run_pipeline(
         data_path=args.data,
         output_pose_path=args.output_pose,
         output_data_path=args.output_data,
@@ -160,7 +175,7 @@ def _handle_pipeline(args: argparse.Namespace) -> int:
         platform_index=args.platform_index,
         device_index=args.device_index,
         cpp_mode=args.cpp_mode,
-    )
+    ))
     # opencl already printed its own detailed summary (search's block, then
     # resample's block, then "total (search + resample)") inside
     # run_pipeline() itself, matching projection-center-cpp/'s own output.

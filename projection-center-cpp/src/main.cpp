@@ -11,6 +11,7 @@
 #include <H5Cpp.h>
 #include <boost/program_options.hpp>
 #include "forward_search.hpp"
+#include "stage_timing.hpp"
 
 namespace po = boost::program_options;
 
@@ -136,15 +137,21 @@ int main(int argc, char* argv[]) {
         args.alpha_step  = vm["alpha-step"].as<double>()  / 180.0 * PI;
         args.beta_step   = vm["beta-step"].as<double>()   / 180.0 * PI;
 
+        auto t_compute0 = std::chrono::steady_clock::now();
         CbPose pose = computeCOR(para, projs, args,
                                  vm["kernel"].as<std::string>(),
                                  vm["mode"].as<std::string>());
+        double compute_ms = msSince(t_compute0);
 
+        auto t_write0 = std::chrono::steady_clock::now();
         writeHDF5(vm["output"].as<std::string>(), pose);
+        double write_ms = msSince(t_write0);
         std::cerr << "MSE:    " << pose.mse << "\n";
         std::cerr << "xshift: " << pose.xshift * 1000.0 << " mm\n";
         std::cerr << "alpha:  " << pose.alpha / PI * 180.0 << " deg\n";
         std::cerr << "beta:   " << pose.beta  / PI * 180.0 << " deg\n";
+        printTimingLine(std::chrono::duration<double, std::milli>(t_load1 - t_load0).count(),
+                        compute_ms, write_ms);
 
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << "\n";

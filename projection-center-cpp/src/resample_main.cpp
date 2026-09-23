@@ -16,6 +16,7 @@
 #include <boost/json.hpp>
 #include "forward_search.hpp"
 #include "resample.hpp"
+#include "stage_timing.hpp"
 
 namespace po = boost::program_options;
 namespace json = boost::json;
@@ -152,17 +153,24 @@ int main(int argc, char* argv[]) {
                   << para.detector_width << "x" << para.detector_height
                   << " (" << std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count() << "ms)\n";
 
+        auto t_pose0 = std::chrono::steady_clock::now();
         ResamplePose pose = readPoseJSON(vm["pose"].as<std::string>());
+        double read_ms = std::chrono::duration<double, std::milli>(t1 - t0).count() + msSince(t_pose0);
 
+        auto t_compute0 = std::chrono::steady_clock::now();
         ResampleOutput result = computeResample(para, projs, pose,
                                                 vm["downsample"].as<int>(),
                                                 vm["kernel"].as<std::string>(),
                                                 vm["batch-size"].as<int>());
+        double compute_ms = msSince(t_compute0);
 
+        auto t_write0 = std::chrono::steady_clock::now();
         writeResampledHDF5(vm["output"].as<std::string>(), result.para, result.projs);
+        double write_ms = msSince(t_write0);
         auto t2 = std::chrono::steady_clock::now();
         std::cerr << "Wrote " << vm["output"].as<std::string>()
                   << " (" << std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count() << "ms total)\n";
+        printTimingLine(read_ms, compute_ms, write_ms);
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << "\n";
         return 1;

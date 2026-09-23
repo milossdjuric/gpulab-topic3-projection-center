@@ -8,7 +8,7 @@ import subprocess
 import sys
 
 FORWARD_SEARCH_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(FORWARD_SEARCH_DIR, "src"))
+sys.path.insert(0, FORWARD_SEARCH_DIR)
 
 import h5py
 import numpy as np

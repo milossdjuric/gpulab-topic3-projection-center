@@ -7,6 +7,11 @@ Usage:
     # to runs/real_cb_pose.h5 / runs/ref_cb_pose.json):
     python3 validate_forward_search.py
 
+    # With --run-ref and no --ref, the freshly computed reference pose is
+    # written to a new runs/ref_cb_pose_<timestamp>.json (path printed), so
+    # an earlier reference result is never overwritten. Pass --ref to choose
+    # the file yourself.
+
     # Or run the Python reference automatically:
     python3 validate_forward_search.py --run-ref \
         --data /lgrp/edu-2026-1-gpulab/projs_change.hdf5
@@ -188,10 +193,13 @@ def _load_cb_para(f, projs):
 
 
 def run_corrected_reference(data_path, out_path, xshift, alpha, beta,
-                            xshift_step, alpha_step, beta_step):
+                            xshift_step, alpha_step, beta_step, io_times=None):
     """Runs Topic_3_forwardsearching.Compute_COR in-process with
     get_linear_interpolate_MSE monkey-patched to the zero-init-on-oob
-    version above. The file on disk is never written to."""
+    version above. The file on disk is never written to.
+
+    io_times: optional {"read": s, "write": s} dict; the time spent reading
+    the input HDF5 and writing the pose file gets added to it."""
     reference_dir = os.path.join(os.path.dirname(__file__), "reference")
     if reference_dir not in sys.path:
         sys.path.insert(0, reference_dir)
@@ -200,9 +208,12 @@ def run_corrected_reference(data_path, out_path, xshift, alpha, beta,
     orig_fn = ref_mod.get_linear_interpolate_MSE
     ref_mod.get_linear_interpolate_MSE = _corrected_get_linear_interpolate_MSE
     try:
+        t_read = time.time()
         with h5py.File(data_path, "r") as f:
             projs = f["Projection"][()][:]
             cb_para = _load_cb_para(f, projs)
+        if io_times is not None:
+            io_times["read"] += time.time() - t_read
 
         class _Args:
             pass
@@ -217,11 +228,14 @@ def run_corrected_reference(data_path, out_path, xshift, alpha, beta,
         print(f"Corrected reference finished in {elapsed:.1f}s")
 
         real_cb_pose["_corrected_reference"] = True
+        t_write = time.time()
         out_dir = os.path.dirname(out_path)
         if out_dir:
             os.makedirs(out_dir, exist_ok=True)
         with open(out_path, "w") as f:
             json.dump(real_cb_pose, f)
+        if io_times is not None:
+            io_times["write"] += time.time() - t_write
     finally:
         ref_mod.get_linear_interpolate_MSE = orig_fn
 
@@ -377,7 +391,11 @@ def compare(gpu, ref, xshift_step_m=None, alpha_step_rad=None, beta_step_rad=Non
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--gpu",  default="runs/real_cb_pose.h5",  help="GPU output HDF5")
-    ap.add_argument("--ref",  default="runs/ref_cb_pose.json",   help="Reference JSON")
+    ap.add_argument("--ref",  default=None,
+                    help="Reference JSON. Without --run-ref: the file to compare against "
+                         "(default runs/ref_cb_pose.json). With --run-ref: where the new "
+                         "reference pose is written (default: a new "
+                         "runs/ref_cb_pose_<timestamp>.json, never an existing file).")
     ap.add_argument("--run-ref", action="store_true",        help="Run Python reference first")
     ap.add_argument("--fix-ref", action="store_true",
                     help="With --run-ref, run the reference in-process with its "
@@ -392,6 +410,14 @@ def main():
     ap.add_argument("--alpha-step",  type=float, default=1.0)
     ap.add_argument("--beta-step",   type=float, default=1.0)
     args = ap.parse_args()
+
+    if args.ref is None:
+        if args.run_ref:
+            args.ref = time.strftime("runs/ref_cb_pose_%Y%m%d-%H%M%S.json")
+            os.makedirs(os.path.dirname(args.ref), exist_ok=True)
+            print(f"Writing the new reference pose to {args.ref}")
+        else:
+            args.ref = "runs/ref_cb_pose.json"
 
     if args.run_ref:
         if args.fix_ref:
