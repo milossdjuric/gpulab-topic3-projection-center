@@ -72,6 +72,10 @@ void computeRotationMatrix(const CbPara& para, const ResamplePose& pose, float o
 
 } // namespace
 
+CbPara resampleOutputGeometry(const CbPara& para, const ResamplePose& pose, int downsample_factor) {
+    return computeCorrectedGeometry(para, pose, downsample_factor);
+}
+
 // Runs resample, called by every CLI binary that does it. Works out the
 // corrected geometry once, picks a GPU and compiles the kernel once, then
 // sends the images through it a batch at a time (so the whole dataset
@@ -82,6 +86,21 @@ ResampleOutput computeResample(const CbPara& para,
                                int downsample_factor,
                                const std::string& kernel_path,
                                int batch_size) {
+    CbPara out_para = computeCorrectedGeometry(para, pose, downsample_factor);
+    std::vector<float> result(static_cast<size_t>(para.num_projs) * out_para.detector_width * out_para.detector_height);
+    computeResampleInto(para, projs.data(), pose, downsample_factor, kernel_path, batch_size, result.data());
+    return { out_para, std::move(result) };
+}
+
+// The actual work behind computeResample(), writing into caller-owned
+// memory instead of a vector it allocates itself.
+void computeResampleInto(const CbPara& para,
+                         const float* projs,
+                         const ResamplePose& pose,
+                         int downsample_factor,
+                         const std::string& kernel_path,
+                         int batch_size,
+                         float* result) {
     CbPara out_para = computeCorrectedGeometry(para, pose, downsample_factor);
     float rotation[9];
     computeRotationMatrix(para, pose, rotation);
@@ -101,8 +120,6 @@ ResampleOutput computeResample(const CbPara& para,
     int out_w = out_para.detector_width, out_h = out_para.detector_height; // output (corrected) detector size
     int num_projs = para.num_projs;
 
-    std::vector<float> result(static_cast<size_t>(num_projs) * out_w * out_h);
-
     // One pair of GPU buffers, reused for every batch instead of
     // allocating a new pair each time. The last batch may be smaller and
     // just uses part of them.
@@ -117,7 +134,7 @@ ResampleOutput computeResample(const CbPara& para,
 
         queue.enqueueWriteBuffer(in_buf, CL_TRUE, 0,
                                  static_cast<size_t>(count) * in_w * in_h * sizeof(float),
-                                 projs.data() + static_cast<size_t>(start) * in_w * in_h);
+                                 projs + static_cast<size_t>(start) * in_w * in_h);
 
         kernel.setArg(0, in_buf);
         kernel.setArg(1, out_buf);
@@ -135,9 +152,8 @@ ResampleOutput computeResample(const CbPara& para,
         queue.enqueueNDRangeKernel(kernel, cl::NullRange, cl::NDRange(out_w, out_h, count), cl::NullRange);
         queue.enqueueReadBuffer(out_buf, CL_TRUE, 0,
                                 static_cast<size_t>(count) * out_w * out_h * sizeof(float),
-                                result.data() + static_cast<size_t>(start) * out_w * out_h);
+                                result + static_cast<size_t>(start) * out_w * out_h);
     }
 
     std::cerr << "Resampled " << num_projs << " projections\n";
-    return { out_para, std::move(result) };
 }

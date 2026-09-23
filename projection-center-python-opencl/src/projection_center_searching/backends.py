@@ -10,6 +10,7 @@ from pathlib import Path
 import numpy as np
 
 from .models import ConeBeamParameters, ResampleConfig, SearchConfig, SearchResult
+from .timing import IO
 
 try:
     import pyopencl as cl
@@ -544,6 +545,9 @@ def _run_cpp_quietly(cmd: list[str]) -> None:
     # captured output is surfaced in the raised error instead of being
     # lost, so nothing is harder to debug than before.
     result = subprocess.run(cmd, capture_output=True, text=True)
+    # The binary reports its own read/write time in its timing line; add it
+    # to this run's totals so the CLI's timing line covers the cpp backend too.
+    IO.add_native(result.stderr + result.stdout)
     if result.returncode != 0:
         raise RuntimeError(
             f"cpp backend command failed (exit {result.returncode}): {' '.join(cmd)}\n"
@@ -646,7 +650,7 @@ class CppBackend:
             ]
             _run_cpp_quietly(cmd)
 
-            with h5py.File(output_h5, "r") as handle:
+            with IO.reading(), h5py.File(output_h5, "r") as handle:
                 return SearchResult(
                     center_point=(float(handle["center_point"][0]), float(handle["center_point"][1])),
                     xshift=float(handle["xshift"][()]),
@@ -731,7 +735,7 @@ class CppBackend:
             ]
             _run_cpp_quietly(cmd)
 
-            with h5py.File(pose_h5, "r") as handle:
+            with IO.reading(), h5py.File(pose_h5, "r") as handle:
                 return SearchResult(
                     center_point=(float(handle["center_point"][0]), float(handle["center_point"][1])),
                     xshift=float(handle["xshift"][()]),

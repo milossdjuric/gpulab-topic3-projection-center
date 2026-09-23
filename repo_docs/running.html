@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Pose &amp; Resample Reference</title>
+<!--
+  Source of repo_docs/running.pdf. Edit this file, then regenerate the PDF
+  from the repo root with:
+
+    google-chrome --headless --disable-gpu --no-pdf-header-footer \
+      --print-to-pdf=repo_docs/running.pdf repo_docs/running.html
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #17202a;
+    --muted: #5b6770;
+    --line: #d9dee2;
+    --teal: #0f7c80;
+    --opencl: #13868b;
+    --cpu: #b07a18;
+    --cpp: #6a4fb3;
+    --pybind: #2f6fd0;
+    --ref: #6b7280;
+    --warn: #b45309;
+    --info: #1d6fa5;
+    --ok: #2e7d4f;
+  }
+  @page { size: A4; margin: 16mm 15mm 18mm 15mm; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: #fff;
+    color: var(--ink);
+    font: 10pt/1.45 "IBM Plex Sans", system-ui, sans-serif;
+  }
+  code, pre { font-family: "IBM Plex Mono", ui-monospace, monospace; }
+  .eyebrow {
+    font: 600 7.5pt "IBM Plex Mono", monospace;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--teal);
+    margin: 0 0 6pt;
+  }
+  h1 { font-size: 21pt; margin: 0 0 12pt; letter-spacing: -.01em; }
+  .lede { max-width: 66ch; color: #33404a; margin: 0 0 12pt; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6pt; margin: 0 0 16pt; }
+  .chip {
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 2pt 9pt;
+    font: 600 7.5pt "IBM Plex Mono", monospace;
+  }
+  .chip::before {
+    content: "";
+    display: inline-block;
+    width: 6pt; height: 6pt;
+    border-radius: 50%;
+    margin-right: 5pt;
+    vertical-align: 0;
+    background: var(--c);
+  }
+  hr { border: 0; border-top: 1.5px solid var(--line); margin: 0 0 14pt; }
+
+  section { break-before: page; }
+  section.first { break-before: auto; }
+  h2 { font-size: 13pt; margin: 0 0 3pt; display: flex; align-items: baseline; gap: 8pt; }
+  h2 .n { font: 400 8pt "IBM Plex Mono", monospace; color: var(--muted); }
+  .sub { color: var(--muted); margin: 0 0 10pt; font-size: 9pt; }
+
+  .card {
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--c, var(--line));
+    border-radius: 5px;
+    padding: 6pt 10pt 7pt;
+    margin: 0 0 6pt;
+    break-inside: avoid;
+    box-shadow: 0 1px 2px rgba(0,0,0,.05);
+  }
+  .card .head { display: flex; justify-content: space-between; align-items: baseline; gap: 8pt; }
+  .card .t { font-weight: 600; font-size: 8.5pt; }
+  .card .d { color: var(--muted); font-size: 7.8pt; margin: 1pt 0 6pt; }
+  .tag {
+    font: 600 7pt "IBM Plex Mono", monospace;
+    color: var(--c);
+    background: color-mix(in srgb, var(--c) 12%, white);
+    border-radius: 3px;
+    padding: 1pt 5pt;
+  }
+  pre {
+    margin: 0;
+    font-size: 8.2pt;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  pre .f { color: var(--muted); }
+  .opencl { --c: var(--opencl); }
+  .cpu    { --c: var(--cpu); }
+  .cpp    { --c: var(--cpp); }
+  .pybind { --c: var(--pybind); }
+  .ref    { --c: var(--ref); }
+
+  .matrix { display: grid; grid-template-columns: 58pt 1fr; column-gap: 12pt; }
+  .matrix .label { font-weight: 700; font-size: 8.5pt; align-self: center; }
+  .group { margin-bottom: 8pt; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 8.3pt; margin: 0 0 10pt; }
+  th {
+    text-align: left;
+    font: 600 7pt "IBM Plex Mono", monospace;
+    letter-spacing: .08em;
+    color: var(--muted);
+    text-transform: uppercase;
+    border-bottom: 1.5px solid var(--line);
+    padding: 4pt 6pt;
+  }
+  td { border-bottom: 1px solid var(--line); padding: 5pt 6pt; vertical-align: top; }
+  td code { font-size: 8pt; }
+  .kv { width: auto; min-width: 45%; }
+  .kv td:first-child { color: var(--muted); padding-right: 18pt; }
+
+  .note {
+    display: flex; gap: 8pt;
+    border-radius: 5px;
+    padding: 7pt 10pt;
+    font-size: 8.4pt;
+    margin: 4pt 0 10pt;
+    break-inside: avoid;
+    background: color-mix(in srgb, var(--c) 8%, white);
+    border: 1px solid color-mix(in srgb, var(--c) 30%, white);
+  }
+  .note .i { color: var(--c); font-weight: 700; }
+  .warn { --c: var(--warn); }
+  .info { --c: var(--info); }
+  .ok   { --c: var(--ok); }
+  .note code, .sub code, td code, p code, li code {
+    font-size: 8pt;
+    background: #f2f4f5;
+    padding: 0 3pt;
+    border-radius: 3px;
+  }
+  .limits .note { margin-bottom: 7pt; }
+  footer {
+    margin-top: 18pt; padding-top: 6pt;
+    border-top: 1px solid var(--line);
+    display: flex; justify-content: space-between;
+    font: 7pt "IBM Plex Mono", monospace; color: var(--muted);
+  }
+</style>
+</head>
+<body>
+
+<p class="eyebrow">Command reference · cone-beam CT pose &amp; resample</p>
+<h1>Pose &amp; Resample Reference</h1>
+<p class="lede">Every command to install, build, find a projection center-of-rotation pose,
+resample against it, and validate the result, across the three interchangeable
+backends of the <code>projection-center</code> command and the course-required
+pybind11 Python interface.</p>
+<div class="chips">
+  <span class="chip opencl">opencl · PyOpenCL, GPU</span>
+  <span class="chip cpu">cpu · NumPy, no GPU</span>
+  <span class="chip cpp">cpp · projection-center-cpp/ binaries</span>
+  <span class="chip pybind">pybind · Python interface</span>
+</div>
+<hr>
+
+<!-- ============================================================ -->
+<section class="first">
+<h2><span class="n">01</span>Setup</h2>
+<p class="sub">Run once, from the repo root (<code>Topic_3/</code>). The second block is Linux-only, and only needed for the <code>cpp</code> backend.</p>
+
+<div class="card">
+  <div class="t">Install the Python package</div>
+  <div class="d">Editable install; registers the <code>projection-center</code> command.</div>
+  <pre>cd projection-center-python-opencl &amp;&amp; python3 -m pip install -e . &amp;&amp; cd ..</pre>
+</div>
+<div class="card">
+  <div class="t">Build the C++/OpenCL binaries (Linux only)</div>
+  <div class="d">Configures, then compiles, via meson and ninja. Needs (Ubuntu/Debian) <code>ocl-icd-opencl-dev opencl-clhpp-headers libhdf5-dev libboost-program-options-dev libboost-json-dev</code>.</div>
+  <pre>cd projection-center-cpp &amp;&amp; meson setup builddir &amp;&amp; meson compile -C builddir &amp;&amp; cd ..</pre>
+</div>
+<div class="card">
+  <div class="t">List visible OpenCL devices</div>
+  <div class="d">Queries every OpenCL platform and prints what it finds.</div>
+  <pre>projection-center devices</pre>
+</div>
+<div class="card pybind">
+  <div class="head"><span class="t">Python interface (pybind11): check the requirements</span><span class="tag">pybind</span></div>
+  <div class="d">Needs <code>torch</code> (brings <code>torch.utils.cpp_extension</code> and the pybind11 headers), <code>numpy</code>, <code>h5py</code>, plus <code>g++</code> and <code>ninja</code>. OpenCL header + loader: <code>sudo apt install opencl-clhpp-headers ocl-icd-opencl-dev</code>. No build step: the first import compiles the module (~40 s) and caches it.</div>
+  <pre>python3 -c "import torch, numpy, h5py" &amp;&amp; which g++ ninja</pre>
+</div>
+</section>
+
+<!-- ============================================================ -->
+<section>
+<h2><span class="n">02</span>Datasets</h2>
+<p class="sub">The two course datasets live under <code>data/</code> (gitignored, populate locally). The commands below spell out every parameter explicitly, nothing left to a default.</p>
+
+<div class="card">
+  <div class="t">data/proj_shepplogan128.hdf5 · Shepp–Logan phantom, 128px</div>
+  <table class="kv">
+    <tr><td>projections</td><td>500</td></tr>
+    <tr><td>detector (H × W)</td><td>128 × 128</td></tr>
+    <tr><td>SDD / SOD</td><td>1085.6 / 416.5</td></tr>
+    <tr><td>pixel size</td><td>1.731</td></tr>
+  </table>
+  <pre>projection-center pipeline <span class="f">--backend</span> opencl <span class="f">--data</span> data/proj_shepplogan128.hdf5 <span class="f">--xshift</span> 40.0 <span class="f">--alpha</span> 10.0 <span class="f">--beta</span> 10.0 <span class="f">--xshift-step</span> 1.0 <span class="f">--alpha-step</span> 1.0 <span class="f">--beta-step</span> 1.0 <span class="f">--downsample</span> 1 <span class="f">--batch-size</span> 16 <span class="f">--output-pose</span> runs/shepp128_run/pose.json <span class="f">--output-data</span> runs/shepp128_run/resampled.hdf5</pre>
+</div>
+
+<div class="card">
+  <div class="t">data/proj_shepplogan512.hdf5 · Shepp–Logan phantom, 512px</div>
+  <table class="kv">
+    <tr><td>projections</td><td>1000</td></tr>
+    <tr><td>detector (H × W)</td><td>800 × 500</td></tr>
+    <tr><td>SDD / SOD</td><td>1.2 / 0.2</td></tr>
+    <tr><td>pixel size</td><td>0.00117</td></tr>
+  </table>
+  <pre>projection-center pipeline <span class="f">--backend</span> opencl <span class="f">--data</span> data/proj_shepplogan512.hdf5 <span class="f">--xshift</span> 40.0 <span class="f">--alpha</span> 10.0 <span class="f">--beta</span> 10.0 <span class="f">--xshift-step</span> 1.0 <span class="f">--alpha-step</span> 1.0 <span class="f">--beta-step</span> 1.0 <span class="f">--downsample</span> 1 <span class="f">--batch-size</span> 16 <span class="f">--output-pose</span> runs/shepp512_run/pose.json <span class="f">--output-data</span> runs/shepp512_run/resampled.hdf5</pre>
+</div>
+
+<div class="note warn"><span class="i">▲</span><span><b>Shepp–Logan caveat:</b> on both phantoms part of the found pose sits on the edge of the search range (128px: xshift = 40 mm; 512px: beta = 10°), identically on every backend. That's a property of the phantom's own symmetry, not a bug (see Limitations). Trust alpha/beta on 128px; treat edge values as weakly determined.</span></div>
+<p class="sub">Swap <code>--backend</code> for <code>cpu</code>/<code>cpp</code> exactly as in the command matrix below. Every flag here works identically on either dataset, on any backend.</p>
+</section>
+
+<!-- ============================================================ -->
+<section>
+<h2><span class="n">03</span>The command matrix</h2>
+<p class="sub">Every subcommand runs on every backend, nine combinations in total. Swap <code>--backend</code>, everything else stays the same. Run from the repo root.</p>
+
+<div class="matrix">
+  <div class="label">search</div>
+  <div class="group">
+    <div class="card opencl"><div class="head"><span class="t">Find the pose</span><span class="tag">opencl</span></div>
+      <div class="d">Grid-searches the pose on the GPU with the package's own PyOpenCL kernel.</div>
+      <pre>projection-center search <span class="f">--backend</span> opencl <span class="f">--data</span> data/proj_shepplogan128.hdf5 <span class="f">--output-pose</span> runs/my_run/pose.json</pre></div>
+    <div class="card cpu"><div class="head"><span class="t">Find the pose</span><span class="tag">cpu</span></div>
+      <div class="d">Same grid search, vectorized in NumPy, no GPU involved.</div>
+      <pre>projection-center search <span class="f">--backend</span> cpu <span class="f">--data</span> data/proj_shepplogan128.hdf5 <span class="f">--output-pose</span> runs/my_run/pose.json</pre></div>
+    <div class="card cpp"><div class="head"><span class="t">Find the pose</span><span class="tag">cpp</span></div>
+      <div class="d">Runs the compiled <code>projection-center-cpp/builddir/forward_search</code> binary and reads its result back.</div>
+      <pre>projection-center search <span class="f">--backend</span> cpp <span class="f">--data</span> data/proj_shepplogan128.hdf5 <span class="f">--output-pose</span> runs/my_run/pose.json <span class="f">--cpp-mode</span> buffer</pre></div>
+  </div>
+
+  <div class="label">resample</div>
+  <div class="group">
+    <div class="card opencl"><div class="head"><span class="t">Apply a pose</span><span class="tag">opencl</span></div>
+      <div class="d">Ray-casts every output pixel back into the original image, on the GPU.</div>
+      <pre>projection-center resample <span class="f">--backend</span> opencl <span class="f">--data</span> data/proj_shepplogan128.hdf5 <span class="f">--pose</span> runs/my_run/pose.json <span class="f">--output-data</span> runs/my_run/resampled.hdf5</pre></div>
+    <div class="card cpu"><div class="head"><span class="t">Apply a pose</span><span class="tag">cpu</span></div>
+      <div class="d">Same ray-casting, vectorized in NumPy.</div>
+      <pre>projection-center resample <span class="f">--backend</span> cpu <span class="f">--data</span> data/proj_shepplogan128.hdf5 <span class="f">--pose</span> runs/my_run/pose.json <span class="f">--output-data</span> runs/my_run/resampled.hdf5</pre></div>
+    <div class="card cpp"><div class="head"><span class="t">Apply a pose</span><span class="tag">cpp</span></div>
+      <div class="d">Runs the compiled <code>forward_search_resample</code> binary.</div>
+      <pre>projection-center resample <span class="f">--backend</span> cpp <span class="f">--data</span> data/proj_shepplogan128.hdf5 <span class="f">--pose</span> runs/my_run/pose.json <span class="f">--output-data</span> runs/my_run/resampled.hdf5 <span class="f">--cpp-mode</span> buffer</pre></div>
+  </div>
+
+  <div class="label">pipeline</div>
+  <div class="group">
+    <div class="card opencl"><div class="head"><span class="t">Search, then resample</span><span class="tag">opencl</span></div>
+      <div class="d">Runs the two commands above back to back, same backend for both.</div>
+      <pre>projection-center pipeline <span class="f">--backend</span> opencl <span class="f">--data</span> data/proj_shepplogan128.hdf5 <span class="f">--output-pose</span> runs/my_run/pose.json <span class="f">--output-data</span> runs/my_run/resampled.hdf5</pre></div>
+    <div class="card cpu"><div class="head"><span class="t">Search, then resample</span><span class="tag">cpu</span></div>
+      <div class="d">Same, entirely on CPU.</div>
+      <pre>projection-center pipeline <span class="f">--backend</span> cpu <span class="f">--data</span> data/proj_shepplogan128.hdf5 <span class="f">--output-pose</span> runs/my_run/pose.json <span class="f">--output-data</span> runs/my_run/resampled.hdf5</pre></div>
+    <div class="card cpp"><div class="head"><span class="t">Search, then resample</span><span class="tag">cpp</span></div>
+      <div class="d">Same, via the single-process <code>projection_center_pipeline_cpp</code> binary.</div>
+      <pre>projection-center pipeline <span class="f">--backend</span> cpp <span class="f">--data</span> data/proj_shepplogan128.hdf5 <span class="f">--output-pose</span> runs/my_run/pose.json <span class="f">--output-data</span> runs/my_run/resampled.hdf5 <span class="f">--cpp-mode</span> buffer</pre></div>
+  </div>
+</div>
+
+<div class="note info"><span class="i">ⓘ</span><span>A fourth choice, <code>--backend hybrid</code>, runs the <code>cpp</code> search with the <code>opencl</code> resample kernel. Same flags as above.</span></div>
+<div class="note ok"><span class="i">✓</span><span><b>Confirmed working, all nine plus hybrid</b>, on the 128px phantom: the same winning pose on every backend (xshift = 40 mm, alpha = −3°, beta = 4°, MSE 6.594e-4), matching the bug-fixed reference. Resampled pixels agree to a mean difference of at most 0.0015 on a data range of ~5·10⁴. Pipeline time: cpp 1.4 s, opencl 1.9 s, cpu 26 s.</span></div>
+</section>
+
+<!-- ============================================================ -->
+<section>
+<h2><span class="n">04</span>Python interface (pybind11)</h2>
+<p class="sub">The interface the course requires: the OpenCL code compiled into a Python module with <code>torch.utils.cpp_extension</code> + pybind11. Python reads the data, passes it in, and gets the results back. Laid out like the course's <code>pybindextension.zip</code>: <code>projection-center-cpp/backend.py</code> next to a <code>src/</code> folder. Full manual: <code>repo_docs/pybind-interface.md</code>.</p>
+
+<div class="card pybind">
+  <div class="head"><span class="t">Go to the interface's folder</span><span class="tag">pybind</span></div>
+  <div class="d">All <code>run_pybind.py</code> commands below run from here.</div>
+  <pre>cd projection-center-cpp</pre>
+</div>
+<div class="note info"><span class="i">ⓘ</span><span>From the repo root instead: <code>python3 projection-center-cpp/run_pybind.py --data data/proj_shepplogan128.hdf5</code>. Running <code>python3 run_pybind.py</code> from the repo root fails with <code>can't open file</code>, because the script is one folder down. The <code>No CUDA runtime is found</code> warning is harmless: this project uses OpenCL.</span></div>
+<div class="card pybind">
+  <div class="head"><span class="t">Full flow: read HDF5 → search → resample → write HDF5</span><span class="tag">pybind</span></div>
+  <div class="d">Writes the pose to <code>runs/real_cb_pose.h5</code> and the corrected projections to <code>runs/projs_resample.h5</code>, and prints the stage log, the pose, <code>search total</code>, <code>resample total</code>, a <code>timing</code> line (read, compute, write, I/O, compute+I/O) and <code>total run</code>, plus the one-off <code>import</code> time at the start. The first run takes longer while it compiles the module.</div>
+  <pre>python3 run_pybind.py <span class="f">--data</span> ../data/proj_shepplogan128.hdf5
+python3 run_pybind.py <span class="f">--data</span> ../data/proj_shepplogan512.hdf5</pre>
+</div>
+<div class="card pybind">
+  <div class="head"><span class="t">Pick the implementation</span><span class="tag">pybind</span></div>
+  <div class="d"><code>cpp</code> (default): our OpenCL kernels · <code>opencl</code>: the package's OpenCL kernels, run from C++ · <code>cpu</code>: the package's NumPy backend, ported to C++.</div>
+  <pre>python3 run_pybind.py <span class="f">--data</span> ../data/proj_shepplogan128.hdf5 <span class="f">--backend</span> opencl
+python3 run_pybind.py <span class="f">--data</span> ../data/proj_shepplogan128.hdf5 <span class="f">--backend</span> cpu</pre>
+</div>
+<div class="card pybind">
+  <div class="head"><span class="t">Search only / keep separate outputs</span><span class="tag">pybind</span></div>
+  <div class="d">Every run overwrites the same two output files unless given its own names.</div>
+  <pre>python3 run_pybind.py <span class="f">--data</span> ../data/proj_shepplogan128.hdf5 <span class="f">--skip-resample</span>
+python3 run_pybind.py <span class="f">--data</span> ../data/proj_shepplogan512.hdf5 <span class="f">--output</span> runs/pose_512.h5 <span class="f">--resample-output</span> runs/resampled_512.h5</pre>
+</div>
+<div class="card pybind">
+  <div class="head"><span class="t">From your own Python code</span><span class="tag">pybind</span></div>
+  <div class="d">Run from <code>projection-center-cpp/</code>. Search ranges in mm/degrees; the pose comes back in meters/radians.</div>
+  <pre>import h5py
+from backend import _backend
+
+with h5py.File("../data/proj_shepplogan128.hdf5", "r") as f:
+    projs = f["Projection"][()]
+    SDD, SOD, px = f["SDD"][()], f["SOD"][()], f["pixelSize"][()]
+H, W = projs.shape[1:]
+
+pose = _backend.search(projs, SDD, SOD, px, W, H, xshift=40.0, alpha=10.0, beta=10.0,
+                       xshift_step=1.0, alpha_step=1.0, beta_step=1.0)   # backend="cpp"|"opencl"|"cpu"
+out = _backend.resample(projs, SDD, SOD, px, xshift=pose["xshift"], alpha=pose["alpha"],
+                        beta=pose["beta"], center_x=pose["center_x"], center_y=pose["center_y"])
+corrected = out["projections"]        # numpy array (num_projs, H, W)</pre>
+</div>
+<div class="card pybind">
+  <div class="head"><span class="t">Tests</span><span class="tag">pybind</span></div>
+  <div class="d">From <code>projection-center-cpp/</code>. Each prints <code>... PASS</code>.</div>
+  <pre>python3 tests/test_backend_smoke.py
+python3 tests/test_cli_vs_backend.py
+python3 tests/test_resample_cli_vs_backend.py
+python3 tests/test_ported_backends.py</pre>
+</div>
+
+<div class="note ok"><span class="i">✓</span><span><b>Confirmed working:</b> every command above, from both folders, plus the four tests (all <code>PASS</code>). 128px: 40 mm / −3° / 4° on cpp, opencl and cpu; 512px: 35 mm / −1° / 10°, the same poses as the <code>projection-center</code> backends.</span></div>
+</section>
+
+<!-- ============================================================ -->
+<section>
+<h2><span class="n">05</span>Optional flags</h2>
+<p class="sub"><code>projection-center</code>: same meaning on every backend unless noted. Defaults shown.</p>
+<table>
+  <tr><th>Flag</th><th>Default</th><th>Applies to</th></tr>
+  <tr><td><code>--xshift / --alpha / --beta</code></td><td>40.0 / 10.0 / 10.0</td><td>search, pipeline · ± range, mm / deg</td></tr>
+  <tr><td><code>--xshift-step / --alpha-step / --beta-step</code></td><td>1.0 / 1.0 / 1.0</td><td>search, pipeline</td></tr>
+  <tr><td><code>--sample-count / --sample-angle-range</code></td><td>1000 / 30.0</td><td>search, pipeline · opencl and cpu only</td></tr>
+  <tr><td><code>--downsample</code></td><td>1</td><td>resample, pipeline</td></tr>
+  <tr><td><code>--batch-size</code></td><td>16</td><td>resample, pipeline · GPU batching only</td></tr>
+  <tr><td><code>--platform-index / --device-index</code></td><td>first device</td><td>opencl only</td></tr>
+  <tr><td><code>--cpp-mode</code></td><td>buffer</td><td>cpp only · image | buffer</td></tr>
+</table>
+<p class="sub"><code>cpp</code> does not support non-default <code>--sample-count</code> / <code>--sample-angle-range</code>: <code>projection-center-cpp/</code> hardcodes them (1000 / 30°).</p>
+
+<p class="sub" style="margin-top:14pt"><code>run_pybind.py</code> (pybind interface), run from <code>projection-center-cpp/</code>:</p>
+<table>
+  <tr><th>Flag</th><th>Default</th><th>Meaning</th></tr>
+  <tr><td><code>--data</code></td><td>required</td><td>input HDF5 file</td></tr>
+  <tr><td><code>--backend</code></td><td>cpp</td><td>cpp | opencl | cpu</td></tr>
+  <tr><td><code>--xshift / --alpha / --beta</code></td><td>40 / 10 / 10</td><td>± search range, mm / deg</td></tr>
+  <tr><td><code>--xshift-step / --alpha-step / --beta-step</code></td><td>1 / 1 / 1</td><td>search step, mm / deg</td></tr>
+  <tr><td><code>--mode</code></td><td>buffer</td><td>cpp backend only · image | buffer</td></tr>
+  <tr><td><code>--downsample</code></td><td>1</td><td>detector downsample factor for resample</td></tr>
+  <tr><td><code>--output / --resample-output</code></td><td>runs/real_cb_pose.h5 / runs/projs_resample.h5</td><td>output files</td></tr>
+  <tr><td><code>--skip-resample</code></td><td>off</td><td>only run the search</td></tr>
+</table>
+</section>
+
+<!-- ============================================================ -->
+<section>
+<h2><span class="n">06</span>Untouched Python reference</h2>
+<p class="sub">Serial, slow, must stay unmodified. Everything above validates against this.</p>
+
+<div class="card ref">
+  <div class="t">Forward search · writes ./real_cb_pose.json</div>
+  <div class="d">Plain Python loop over every candidate pose, one at a time. On the 128px phantom it stops with <code>UnboundLocalError</code> (the known reference bug, see Limitations); use the pipeline command below there.</div>
+  <pre>python3 reference/Topic_3_forwardsearching.py <span class="f">--data</span> data/proj_shepplogan128.hdf5</pre>
+</div>
+<div class="card ref">
+  <div class="t">Resampling · reads ./real_cb_pose.json</div>
+  <div class="d">Plain Python loop over every output pixel. No <code>--pose</code> flag: always reads the file the step above wrote. Writes to a hardcoded lab-network path, so it only completes on that network.</div>
+  <pre>python3 reference/Topic_3_resampling.py <span class="f">--data</span> data/proj_shepplogan128.hdf5</pre>
+</div>
+<div class="card ref">
+  <div class="t">Recommended · both steps, anywhere · ~6 minutes on 128px</div>
+  <div class="d">Runs the reference's own search and resample functions in-process, with the known bug patched in memory (like <code>--fix-ref</code>) and the hardcoded write path bypassed. The files on disk are never touched. Works on the 128px phantom.</div>
+  <pre>python3 reference/run_reference_pipeline.py <span class="f">--data</span> data/proj_shepplogan128.hdf5 <span class="f">--output-pose</span> runs/reference/pose.json <span class="f">--output-data</span> runs/reference/resampled.hdf5</pre>
+</div>
+</section>
+
+<!-- ============================================================ -->
+<section>
+<h2><span class="n">07</span>Validating a pose against the reference</h2>
+<p class="sub">Three ways to run it, in increasing rigor. <code>--gpu</code> takes a pose from any backend (<code>.json</code> or <code>.h5</code>). With <code>--run-ref</code>, the new reference pose is saved to a new <code>runs/ref_cb_pose_&lt;timestamp&gt;.json</code> (the path is printed), so earlier results are never overwritten; pass <code>--ref</code> to pick the file yourself.</p>
+
+<div class="card">
+  <div class="t">Against an existing reference pose file</div>
+  <div class="d">Just diffs two already-computed poses; runs nothing new.</div>
+  <pre>python3 validate_forward_search.py <span class="f">--gpu</span> runs/my_run/pose.json <span class="f">--ref</span> runs/reference/pose.json</pre>
+</div>
+<div class="card">
+  <div class="t">Run the raw reference now (~5.5 min on 128px)</div>
+  <div class="d">Runs the untouched reference script itself, bug included, as the baseline. On the 128px phantom it stops with the same <code>UnboundLocalError</code>; use the recommended form below.</div>
+  <pre>python3 validate_forward_search.py <span class="f">--gpu</span> runs/my_run/pose.json <span class="f">--run-ref</span> <span class="f">--data</span> data/proj_shepplogan128.hdf5</pre>
+</div>
+<div class="card">
+  <div class="t">Recommended · bug-fixed reference, in-process only</div>
+  <div class="d">Same run, with the reference's bug patched in memory only, file untouched.</div>
+  <pre>python3 validate_forward_search.py <span class="f">--gpu</span> runs/my_run/pose.json <span class="f">--run-ref</span> <span class="f">--fix-ref</span> <span class="f">--data</span> data/proj_shepplogan128.hdf5</pre>
+</div>
+<div class="note ok"><span class="i">✓</span><span><b>Confirmed:</b> the first and third commands report <code>OVERALL: PASS</code> on the 128px phantom.</span></div>
+<div class="note info"><span class="i">ⓘ</span><span><b>Why <code>--fix-ref</code>:</b> the raw reference has a known bug (see Limitations) that can shift its own optimum. The corrected run patches it in memory only; the reference file is never touched.</span></div>
+</section>
+
+<!-- ============================================================ -->
+<section>
+<h2><span class="n">08</span>Benchmarking all backends</h2>
+<p class="sub">Two scripts, both run from the repo root.</p>
+
+<div class="card">
+  <div class="t">Every backend, 10× each · benchmark_pybind.py</div>
+  <div class="d">Times pybind-cpp/opencl/cpu and the <code>projection-center</code> cpp/opencl/cpu backends, each rep a fresh process doing read → search → resample → write. Prints mean ± stdev plus per-stage times for pybind; raw results appended to <code>runs/pybind_10x_results.jsonl</code>.</div>
+  <pre>python3 benchmark_pybind.py
+python3 benchmark_pybind.py <span class="f">--reps</span> 10 <span class="f">--datasets</span> 128 <span class="f">--backends</span> pybind-cpp pybind-opencl pybind-cpu</pre>
+</div>
+<div class="card">
+  <div class="t">Against the raw reference · benchmark_backends.py</div>
+  <div class="d">Runs the raw reference, then opencl/cpu/cpp once each, and prints one timing + pose table. Each run saves its outputs in its own new folder, <code>runs/benchmark_all/&lt;timestamp&gt;/&lt;name&gt;/</code>, so earlier results are never overwritten; <code>--output-dir</code> picks the folder yourself. The reference resample is very slow; skip it or the whole reference.</div>
+  <pre>python3 benchmark_backends.py <span class="f">--data</span> data/proj_shepplogan128.hdf5 <span class="f">--skip-reference-resample</span>
+python3 benchmark_backends.py <span class="f">--data</span> data/proj_shepplogan128.hdf5 <span class="f">--skip-reference</span></pre>
+</div>
+<div class="note info"><span class="i">ⓘ</span><span>Don't run two benchmarks at once, or anything else GPU-heavy: they compete for the same GPU and both sets of timings come out wrong. <code>import torch</code> costs ~5 s once per process for the pybind runs, listed separately as the <code>import</code> stage.</span></div>
+</section>
+
+<!-- ============================================================ -->
+<section>
+<h2><span class="n">09</span>Comparing backends yourself</h2>
+<p class="sub">Diffs two already-produced resampled HDF5 files pixel by pixel, e.g. <code>runs/benchmark_all/&lt;timestamp&gt;/opencl/resampled.hdf5</code> against <code>.../cpu/resampled.hdf5</code> from the same benchmark run.</p>
+
+<div class="card">
+  <div class="t">Quick · first 5 projections</div>
+  <div class="d">Loads just 5 projections from each file and reports the pixel-wise difference.</div>
+  <pre>python3 -c "
+import h5py, numpy as np
+a = h5py.File('a/resampled.hdf5')['Projection'][:5]
+b = h5py.File('b/resampled.hdf5')['Projection'][:5]
+d = np.abs(a.astype(float)-b.astype(float))
+print(d.max(), d.mean())"</pre>
+</div>
+<div class="card">
+  <div class="t">Full · every projection</div>
+  <div class="d">Same idea, over the whole dataset instead of a sample.</div>
+  <pre>python3 -c "
+import h5py, numpy as np
+a = h5py.File('a/resampled.hdf5')['Projection'][:]
+b = h5py.File('b/resampled.hdf5')['Projection'][:]
+d = np.abs(a.astype(float)-b.astype(float))
+print(d.max(), d.mean(), np.median(d))"</pre>
+</div>
+
+<h2 style="margin-top:16pt"><span class="n">10</span>Screenshots</h2>
+<p class="sub">Output is raw float32 HDF5. Pull a slice, save as PNG. Both commands use the same projection index, so the two PNGs are directly comparable. Need <code>pillow</code>.</p>
+<div class="card">
+  <div class="t">Original (before correction) → PNG</div>
+  <pre>python3 -c "
+import h5py, numpy as np
+from PIL import Image
+p = h5py.File('data/proj_shepplogan128.hdf5')['Projection'][0]
+n = (p - p.min()) / (p.max() - p.min())
+Image.fromarray((n*255).astype(np.uint8)).save('projection_0_original.png')"</pre>
+</div>
+<div class="card">
+  <div class="t">Resampled (corrected) → PNG</div>
+  <pre>python3 -c "
+import h5py, numpy as np
+from PIL import Image
+p = h5py.File('runs/my_run/resampled.hdf5')['Projection'][0]
+n = (p - p.min()) / (p.max() - p.min())
+Image.fromarray((n*255).astype(np.uint8)).save('projection_0.png')"</pre>
+</div>
+</section>
+
+<!-- ============================================================ -->
+<section class="limits">
+<h2><span class="n">11</span>Limitations</h2>
+<p class="sub">&nbsp;</p>
+<div class="note warn"><span class="i">▲</span><span><code>cpp</code> is verified on Linux. On Windows it compiles via MinGW-w64/MSYS2, but running it on real data isn't verified yet (see <code>repo_docs/windows-support.pdf</code>).</span></div>
+<div class="note warn"><span class="i">▲</span><span><code>--cpp-mode image</code> / <code>mode="image"</code> crashes on the dev machine's Intel iGPU driver. <code>buffer</code> is what's validated.</span></div>
+<div class="note warn"><span class="i">▲</span><span>The reference has a known bug: a ray that misses the detector can silently reuse the previous ray's value, or, on the 128px phantom, crash with <code>UnboundLocalError</code>. Use <code>--fix-ref</code> or <code>reference/run_reference_pipeline.py</code>, which patch it in memory only.</span></div>
+<div class="note warn"><span class="i">▲</span><span><code>Topic_3_resampling.py</code> writes to a hardcoded lab-network path, so it fails off that network. Use <code>reference/run_reference_pipeline.py</code> or <code>projection-center resample</code> instead.</span></div>
+<div class="note warn"><span class="i">▲</span><span>On the Shepp–Logan phantoms part of the found pose is weakly determined and lands on the search-range edge (128px: xshift; 512px: beta), identically on every backend: a property of the phantom, not a bug.</span></div>
+<div class="note warn"><span class="i">▲</span><span>pybind runs pay ~5 s for <code>import torch</code>, once per Python process: a fixed cost of the required <code>torch.utils.cpp_extension</code> interface, not of the computation.</span></div>
+<footer><span>Cone-beam CT · projection center search &amp; resample</span><span>Generated from repo_docs/running.html</span></footer>
+</section>
+
+</body>
+</html>

@@ -17,7 +17,7 @@ grid search, using the GPU for the compute-heavy inner loop.
 On Ubuntu:
 
 ```bash
-sudo apt install meson ninja-build ocl-icd-opencl-dev libhdf5-dev libboost-program-options-dev
+sudo apt install meson ninja-build ocl-icd-opencl-dev opencl-clhpp-headers libhdf5-dev libboost-program-options-dev libboost-json-dev
 ```
 
 Check that a GPU OpenCL platform is visible before building:
@@ -148,11 +148,15 @@ note rather than a hard failure.
 
 ## Python interface (pybind11 / torch.utils.cpp_extension)
 
-Per course requirement, the OpenCL forward search is also callable from Python,
-without going through the CLI at all:
+Per course requirement, forward search and resample are both callable from
+Python, without going through the CLI at all. Python reads the data, passes the
+arrays in, and gets the results back.
+
+Layout follows the course's `pybindextension.zip` example: `backend.py` at the
+top of `projection-center-cpp/`, the C++ sources it compiles under `src/`.
 
 ```python
-# run from projection-center-cpp/src/, or add it to sys.path first
+# run from projection-center-cpp/, or add it to sys.path first
 from backend import _backend
 
 result = _backend.search(
@@ -161,12 +165,43 @@ result = _backend.search(
     detector_width, detector_height,
     xshift=40.0, alpha=10.0, beta=10.0,          # ± search range, mm / degrees
     xshift_step=1.0, alpha_step=1.0, beta_step=1.0,
-    mode="buffer",      # or "image" — see the driver caveat below
+    mode="buffer",      # or "image" — see the driver caveat below (cpp backend only)
+    backend="cpp",      # "cpp" | "opencl" | "cpu" — see the table below
 )
-# result: {"xshift", "alpha", "beta", "MSE", "center_x", "center_y"}
+# result: {"xshift", "alpha", "beta", "MSE", "center_x", "center_y", "kernel_ms"}
+#         (xshift in meters, alpha/beta in radians)
+
+corrected = _backend.resample(
+    projections,       # same array as above
+    SDD, SOD, pixel_size,
+    xshift=result["xshift"], alpha=result["alpha"], beta=result["beta"],
+    center_x=result["center_x"], center_y=result["center_y"],
+    downsample=1, batch_size=16,
+    backend="cpp",      # same choices as search()
+)
+# corrected: {"projections" (numpy, num_projs x out_H x out_W), "SDD", "SOD",
+#             "pixel_size", "detector_width", "detector_height"}
 ```
 
-The first call JIT-compiles `src/pybind_backend.cpp` + `src/forward_search.cpp` via
+`resample()` takes the pose exactly as `search()` returns it, so the two chain
+directly in memory. Both read the projections straight from the NumPy array's
+memory, and `resample()` writes straight into the NumPy array it returns, so
+the ~750MB real dataset is never copied on the way in or out.
+
+`backend=` picks one of the project's three implementations, all behind the
+same interface:
+
+| backend | what runs | source |
+|---|---|---|
+| `"cpp"` (default) | this directory's OpenCL kernels, same code as the CLI binaries | `kernels/forward_search.cl`, `kernels/resample.cl`, `src/forward_search.cpp`, `src/resample.cpp` |
+| `"opencl"` | `projection-center-python-opencl/`'s OpenCL kernels, driven from C++ instead of PyOpenCL | `kernels/python_opencl_port.cl` (verbatim copy of its `KERNEL_SOURCE`), `src/ported_backends.cpp` |
+| `"cpu"` | `projection-center-python-opencl/`'s NumPy CPU backend, ported to plain C++ (no GPU) | `src/ported_backends.cpp` |
+
+`"opencl"` and `"cpu"` follow the Python package's `geometry.py`/`backends.py`
+step for step, and `tests/test_ported_backends.py` checks they give the same
+pose and bit-identical resampled output as the Python originals.
+
+The first call JIT-compiles `src/pybind_backend.cpp` + `src/forward_search.cpp` + `src/resample.cpp` + `src/ported_backends.cpp` via
 `torch.utils.cpp_extension.load()` (cached afterwards, so later calls are fast).
 No separate build step, no meson — this path is entirely independent of the
 CLI's `builddir/`, including its optimization flags: `backend.py` passes
@@ -176,13 +211,23 @@ slowdown the CLI's missing `meson.build buildtype` caused). If you built the ext
 clear the JIT cache once to pick it up:
 `rm -rf ~/.cache/torch_extensions/*/forward_search_backend`.
 
-See `src/run_backend_example.py` for a full read-HDF5 → search → write-HDF5 example,
+`run_pybind.py` runs the full read-HDF5 → search → resample → write-HDF5 flow,
 matching the flow the course requires (Python owns all I/O; the backend is pure
 compute).
 
-Tests: `tests/test_backend_smoke.py` (backend runs and returns sane output) and
-`tests/test_cli_vs_backend.py` (backend and CLI agree on identical input) —
-run both with `python3 tests/<name>.py` from the `projection-center-cpp/` directory.
+`import torch` itself takes ~5s on this machine, once per Python process
+(`load()` of the cached extension then takes ~0.03s). That's a fixed cost of
+the required `torch.utils.cpp_extension` interface, not of the computation.
+
+Tests: `tests/test_backend_smoke.py` (backend runs and returns sane output),
+`tests/test_cli_vs_backend.py` (backend and CLI search agree on identical input),
+`tests/test_resample_cli_vs_backend.py` (backend and CLI resample produce
+bit-identical output) and `tests/test_ported_backends.py` (`backend="opencl"`/`"cpu"`
+match the Python package's own opencl/cpu backends) — run them with
+`python3 tests/<name>.py` from the `projection-center-cpp/` directory.
+
+Timing: `benchmark_pybind.py` at the repo root runs every backend (pybind and
+the unified CLI) 10x per dataset and prints mean ± stdev.
 
 **Known driver caveat (this dev machine only):** `mode="image"` crashes on this
 machine's Intel NEO OpenCL driver — a driver bug unrelated to this project's code

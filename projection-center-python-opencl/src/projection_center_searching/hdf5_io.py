@@ -8,8 +8,10 @@ import h5py
 import numpy as np
 
 from .models import ConeBeamParameters, SearchResult
+from .timing import IO
 
 
+@IO.timed_read
 def load_metadata(path: str | Path) -> ConeBeamParameters:
     dataset_path = Path(path)
     with h5py.File(dataset_path, "r") as handle:
@@ -33,6 +35,7 @@ def load_metadata(path: str | Path) -> ConeBeamParameters:
     return params
 
 
+@IO.timed_read
 def load_dataset(path: str | Path) -> tuple[ConeBeamParameters, np.ndarray]:
     params = load_metadata(path)
     dataset_path = Path(path)
@@ -49,7 +52,8 @@ def build_sinogram_from_hdf5(path: str | Path, batch_size: int = 16) -> tuple[Co
         projections = handle["Projection"]
         for start in range(0, params.num_projs, batch_size):
             stop = min(start + batch_size, params.num_projs)
-            batch = np.asarray(projections[start:stop], dtype=np.float32)
+            with IO.reading():
+                batch = np.asarray(projections[start:stop], dtype=np.float32)
             sinogram += batch.sum(axis=0, dtype=np.float64)
     return params, sinogram
 
@@ -64,9 +68,14 @@ def stream_projection_batches(
         projections = handle["Projection"]
         for start in range(0, params.num_projs, batch_size):
             stop = min(start + batch_size, params.num_projs)
-            yield start, np.asarray(projections[start:stop], dtype=np.float32)
+            # Only the read itself is timed, not whatever the caller does
+            # with the batch before asking for the next one.
+            with IO.reading():
+                batch = np.asarray(projections[start:stop], dtype=np.float32)
+            yield start, batch
 
 
+@IO.timed_write
 def write_pose_json(path: str | Path, result: SearchResult) -> None:
     output_path = Path(path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -82,6 +91,7 @@ def write_pose_json(path: str | Path, result: SearchResult) -> None:
     output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
+@IO.timed_read
 def read_pose_json(path: str | Path) -> SearchResult:
     payload = json.loads(Path(path).read_text(encoding="utf-8"))
     return SearchResult(
@@ -94,6 +104,7 @@ def read_pose_json(path: str | Path) -> SearchResult:
     )
 
 
+@IO.timed_write
 def write_resampled_dataset(
     path: str | Path,
     params: ConeBeamParameters,
@@ -119,6 +130,7 @@ def write_resampled_dataset(
         )
 
 
+@IO.timed_write
 def initialize_resampled_dataset(path: str | Path, params: ConeBeamParameters) -> None:
     output_path = Path(path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -140,6 +152,7 @@ def initialize_resampled_dataset(path: str | Path, params: ConeBeamParameters) -
         )
 
 
+@IO.timed_write
 def write_projection_batch(path: str | Path, start: int, projections: np.ndarray) -> None:
     output_path = Path(path)
     stop = start + projections.shape[0]

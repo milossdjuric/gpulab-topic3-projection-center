@@ -36,15 +36,14 @@ static void logStage(const char* label) {
 // needed to be. The cause was a missing compiler flag (the build was
 // compiling without optimizations turned on); once fixed, this drops to
 // well under a second.
-static std::vector<float> buildSinogram(const std::vector<float>& projs,
-                                        int num_projs, int H, int W) {
+std::vector<float> buildSinogram(const float* projs, int num_projs, int H, int W) {
     // Adds in double precision, not float, since plain float addition
     // over 180 images drifts just enough to occasionally pick a different
     // winner in a close call.
     std::vector<double> sino_d(H * W, 0.0);
     for (int p = 0; p < num_projs; ++p)
         for (int i = 0; i < H * W; ++i)
-            sino_d[i] += projs[p * H * W + i];
+            sino_d[i] += projs[static_cast<size_t>(p) * H * W + i];
     double mn = *std::min_element(sino_d.begin(), sino_d.end());
     double mx = *std::max_element(sino_d.begin(), sino_d.end());
     std::vector<float> sino(H * W);
@@ -68,6 +67,14 @@ static std::vector<float> makeRange(double lo, double hi, double step) {
 // every candidate), and returns whichever candidate had the lowest error.
 CbPose computeCOR(const CbPara& para,
                   const std::vector<float>& projs,
+                  const SearchArgs& args,
+                  const std::string& kernel_path,
+                  const std::string& mode) {
+    return computeCOR(para, projs.data(), args, kernel_path, mode);
+}
+
+CbPose computeCOR(const CbPara& para,
+                  const float* projs,
                   const SearchArgs& args,
                   const std::string& kernel_path,
                   const std::string& mode) {
