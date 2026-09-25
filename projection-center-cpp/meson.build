@@ -19,12 +19,21 @@ if not boost_json_lib.found()
 endif
 boost_json = declare_dependency(dependencies: boost_json_lib)
 
+# The OpenCL headers (CL/opencl.hpp + the C headers it needs) are bundled
+# in third_party/opencl/ at one fixed Khronos release, so the build never depends
+# on which version, if any, the machine has installed. Older system copies
+# of opencl.hpp (e.g. Debian 12's) fail to compile with this project's
+# settings. Only the OpenCL library itself (libOpenCL) comes from the system.
+opencl_headers = include_directories('third_party/opencl')
+
 executable('forward_search',
   ['src/main.cpp', 'src/forward_search.cpp'],
+  include_directories: opencl_headers,
   dependencies: [opencl, hdf5, boost])
 
 executable('forward_search_resample',
   ['src/resample_main.cpp', 'src/resample.cpp'],
+  include_directories: opencl_headers,
   dependencies: [opencl, hdf5, boost, boost_json])
 
 # Single-process search + resample: loads the HDF5 data once and passes the
@@ -33,4 +42,5 @@ executable('forward_search_resample',
 # and does not eliminate.
 executable('projection_center_pipeline_cpp',
   ['src/pipeline_main.cpp', 'src/forward_search.cpp', 'src/resample.cpp'],
+  include_directories: opencl_headers,
   dependencies: [opencl, hdf5, boost])

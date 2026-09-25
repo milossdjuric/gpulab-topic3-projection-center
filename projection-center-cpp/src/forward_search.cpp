@@ -4,7 +4,7 @@
 // winner. computeCOR(), at the bottom, is the function every CLI binary
 // calls; everything above it is a helper only this file uses.
 #define CL_HPP_ENABLE_EXCEPTIONS
-#define CL_HPP_MINIMUM_OPENCL_VERSION 120
+#define CL_HPP_MINIMUM_OPENCL_VERSION 200
 #define CL_HPP_TARGET_OPENCL_VERSION 300
 #include <CL/opencl.hpp>
 #include "forward_search.hpp"
@@ -79,6 +79,17 @@ CbPose computeCOR(const CbPara& para,
                   const std::string& kernel_path,
                   const std::string& mode) {
     g_t0 = std::chrono::steady_clock::now();
+    // A step of 0 or inf would make makeRange() loop forever; a negative or
+    // NaN range gives an empty grid; a huge grid overflows the int indexes.
+    auto positive    = [](double v) { return std::isfinite(v) && v > 0; };
+    auto nonnegative = [](double v) { return std::isfinite(v) && v >= 0; };
+    if (!(positive(args.xshift_step) && positive(args.alpha_step) && positive(args.beta_step)))
+        throw std::runtime_error("xshift/alpha/beta steps must be finite and > 0");
+    if (!(nonnegative(args.xshift) && nonnegative(args.alpha) && nonnegative(args.beta)))
+        throw std::runtime_error("xshift/alpha/beta ranges must be finite and >= 0");
+    if ((2 * args.xshift / args.xshift_step + 1) * (2 * args.alpha / args.alpha_step + 1)
+        * (2 * args.beta / args.beta_step + 1) > 1e8)
+        throw std::runtime_error("search grid too large (limit 1e8 candidates): use a smaller range or a larger step");
     bool use_buffer = (mode == "buffer");
     if (!use_buffer && mode != "image")
         throw std::runtime_error("Unknown --mode '" + mode + "' (expected image|buffer)");
@@ -192,17 +203,10 @@ CbPose computeCOR(const CbPara& para,
     // GPU work-group per candidate.
     cl::Kernel k_search(prog, use_buffer ? "forward_search_mse_buffer" : "forward_search_mse");
 
-    // How many GPU threads work together on one candidate's score. Uses
-    // the GPU's real maximum (up to 256), rounded to a power of two,
-    // never below 64.
-    size_t max_wg = dev.getInfo<CL_DEVICE_MAX_WORK_GROUP_SIZE>();
-    size_t WG_SIZE = std::min<size_t>(256, max_wg);
-    if (WG_SIZE & (WG_SIZE - 1)) {  // round down to the nearest power of two
-        size_t p = 1;
-        while (p * 2 <= WG_SIZE) p *= 2;
-        WG_SIZE = p;
-    }
-    if (WG_SIZE < 64) WG_SIZE = 64;  // floor: still keep some occupancy on very constrained devices
+    // How many GPU threads work together on one candidate's score: up to
+    // 256, limited by both the GPU and this kernel's own maximum, rounded
+    // down to a power of two (see kernelWorkGroupSize()).
+    size_t WG_SIZE = kernelWorkGroupSize(k_search, dev);
     std::cerr << "WG_SIZE: " << WG_SIZE << "\n";
 
     // Give the kernel everything it needs: the sinogram, the candidates,

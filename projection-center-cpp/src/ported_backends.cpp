@@ -4,7 +4,7 @@
 // NumPy works in float64 this does too, where it works in float32 (the
 // resample coordinate grid) this uses float.
 #define CL_HPP_ENABLE_EXCEPTIONS
-#define CL_HPP_MINIMUM_OPENCL_VERSION 120
+#define CL_HPP_MINIMUM_OPENCL_VERSION 200
 #define CL_HPP_TARGET_OPENCL_VERSION 300
 #include <CL/opencl.hpp>
 #include "ported_backends.hpp"
@@ -157,17 +157,6 @@ inline float bilinearCPU(const float* img, int w, int h, double x, double y) {
     return static_cast<float>((1.0 - dx) * ((1.0 - dy) * v00 + dy * v01) + dx * ((1.0 - dy) * v10 + dy * v11));
 }
 
-// Same as backends.py's OpenCLBackend: at most 256 work-items per group
-// (the kernel's __local scratch arrays are sized 256), rounded down to a
-// power of two.
-size_t workGroupSize(const cl::Device& dev) {
-    size_t wg = std::min<size_t>(256, dev.getInfo<CL_DEVICE_MAX_WORK_GROUP_SIZE>());
-    wg = std::max<size_t>(1, wg);
-    size_t p = 1;
-    while (p * 2 <= wg) p *= 2;
-    return p;
-}
-
 } // namespace
 
 // backends.py's OpenCLBackend.search(), with pipeline.py's run_search()
@@ -226,7 +215,9 @@ CbPose searchPortedOpenCL(const CbPara& para, const float* projs,
     k.setArg(9, static_cast<float>(para.pixel_size));
     k.setArg(10, config.sample_count);
 
-    size_t wg = workGroupSize(dev);
+    // At most 256 (the kernel's __local scratch arrays are sized 256), like
+    // backends.py's OpenCLBackend, and within the kernel's own limit.
+    size_t wg = kernelWorkGroupSize(k, dev, 256);
     std::cerr << "WG_SIZE: " << wg << "\n";
     cl::Event ev;
     queue.enqueueNDRangeKernel(k, cl::NullRange, cl::NDRange(wg, P), cl::NDRange(wg, 1), nullptr, &ev);
