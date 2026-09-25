@@ -17,7 +17,16 @@ grid search, using the GPU for the compute-heavy inner loop.
 On Ubuntu:
 
 ```bash
-sudo apt install meson ninja-build ocl-icd-opencl-dev opencl-clhpp-headers libhdf5-dev libboost-program-options-dev libboost-json-dev
+sudo apt install meson ninja-build ocl-icd-opencl-dev libhdf5-dev libboost-program-options-dev libboost-json-dev
+# the OpenCL headers are bundled in third_party/opencl/ (see its README.md)
+```
+
+Debian 12 has no `libboost-json-dev`: its default Boost is 1.74, and Boost.JSON
+starts at 1.75. Use Debian 12's versioned Boost 1.81 packages instead, both of
+them, so the two Boost versions don't conflict:
+
+```bash
+sudo apt install meson ninja-build ocl-icd-opencl-dev libhdf5-dev libboost-program-options1.81-dev libboost-json1.81-dev
 ```
 
 Check that a GPU OpenCL platform is visible before building:

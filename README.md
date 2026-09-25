@@ -74,6 +74,7 @@ Longer write-ups live as PDFs under `repo_docs/`:
 |   |   |-- stage_timing.hpp            the shared read/compute/write timing line
 |   |   `-- main.cpp / resample_main.cpp / pipeline_main.cpp  CLI entrypoints
 |   |-- kernels/*.cl                   OpenCL C kernels
+|   |-- third_party/opencl/            bundled Khronos OpenCL headers (CL/opencl.hpp + C headers)
 |   |-- tests/                         smoke + CLI-vs-backend + ported-backend regression tests
 |   `-- README.md
 |-- projection-center-python-opencl/                fetched Python/PyOpenCL implementation
@@ -111,7 +112,9 @@ Longer write-ups live as PDFs under `repo_docs/`:
 
 - Python 3.10 or newer, `numpy`, `h5py`, `pyopencl`, `mako`
 - A C++17 compiler, Meson + Ninja, HDF5 C++ headers, Boost (`program_options`, JSON)
-- An installed OpenCL runtime, plus the OpenCL C++ header (`opencl-clhpp-headers` on Ubuntu/Debian)
+- An installed OpenCL runtime: the loader library (`ocl-icd-opencl-dev` on Ubuntu/Debian) and a GPU driver.
+  The OpenCL headers themselves are bundled in `projection-center-cpp/third_party/opencl/`, so the
+  build doesn't depend on which version (if any) the system has
 - For the pybind11 Python interface: `torch` (brings pybind11), `numpy`, `h5py`, `g++`, `ninja`; see "Python Interface (pybind11)"
 
 `projection-center-cpp/`'s C++ dependencies are declared in `projection-center-cpp/meson.build`;
@@ -232,7 +235,7 @@ How it maps to the course's example:
 
 | `pybindextension.zip` | `projection-center-cpp/` |
 |---|---|
-| `backend.py`: `_backend = load(name='add_test', sources=[src/add_test.cpp])` | `backend.py`: `_backend = load(name="forward_search_backend", sources=[src/pybind_backend.cpp, ...])`, plus `-lOpenCL`, the kernel folder and `-O3` |
+| `backend.py`: `_backend = load(name='add_test', sources=[src/add_test.cpp])` | `backend.py`: `_backend = load(name="forward_search_backend", sources=[src/pybind_backend.cpp, ...])`, plus the bundled OpenCL headers, the OpenCL library it finds on the machine and `-O3`; then tells the module where the `kernels/` folder is |
 | `src/add_test.cpp`: `PYBIND11_MODULE(add_test, m)`, `m.def("add", ...)` | `src/pybind_backend.cpp`: `PYBIND11_MODULE(forward_search_backend, m)`, `m.def("search", ...)`, `m.def("resample", ...)` |
 | `from backend import _backend`, then `_backend.add(0.2)` | `from backend import _backend`, then `_backend.search(...)` and `_backend.resample(...)` |
 
@@ -244,13 +247,38 @@ Needs:
 
 - Python: `torch` (which also brings the pybind11 headers; a CPU-only build
   is enough), `numpy`, `h5py`: `python3 -m pip install torch numpy h5py`
-- `g++` and `ninja`, which `torch.utils.cpp_extension` compiles with
-- OpenCL: the C++ header `CL/opencl.hpp`, the loader library, and a GPU
-  driver. On Ubuntu/Debian: `sudo apt install opencl-clhpp-headers
-  ocl-icd-opencl-dev` plus your vendor driver (e.g. `intel-opencl-icd`)
+- `g++`, `ninja` and the Python headers (`Python.h`: `sudo apt install python3-dev`,
+  or `python3.11-dev` to match your Python), which `torch.utils.cpp_extension` compiles with.
+  `ninja` can come from the system (`apt install ninja-build`) or from pip
+  (`pip install ninja`) into the same Python that runs the project; a venv's
+  ninja is found even when the venv isn't activated
+- OpenCL: the loader library and a GPU driver. On Ubuntu/Debian: `sudo apt
+  install ocl-icd-opencl-dev` plus your vendor driver (e.g. `intel-opencl-icd`,
+  or the NVIDIA driver). The runtime library alone (`libOpenCL.so.1`) is also
+  enough: `backend.py` finds the library file itself, including in CUDA's
+  `lib64`; `OPENCL_LIBRARY=/path/to/libOpenCL.so.1` overrides the search. The OpenCL headers (`CL/opencl.hpp` and the C
+  headers) are bundled in `projection-center-cpp/third_party/opencl/` at one
+  fixed Khronos release and used before any system copy: older system
+  versions of `opencl.hpp` (e.g. Debian 12's) don't compile this project
 
 No HDF5 or Boost development packages are needed for this part: Python does
 all the file reading and writing.
+
+Where things are written:
+
+- The results go to `runs/real_cb_pose.h5` and `runs/projs_resample.h5`,
+  relative to the folder you run from, and are replaced by the next run. The
+  resampled file is large (about 755 MB for `projs_change.hdf5`). Choose other
+  paths with `--output` and `--resample-output`. If the location isn't
+  writable (e.g. a read-only submission folder), the run says so up front and
+  writes to `/tmp/projection_center_runs_<your user id>/` instead (a folder only
+  you can write to; the run prints the exact path).
+- The compiled module goes to `~/.cache/torch_extensions/`. If that isn't
+  writable, it goes to a private folder in `/tmp` instead; set `TORCH_EXTENSIONS_DIR`
+  to choose the folder yourself.
+- The first GPU found is used. On a machine with several GPUs, pick one with
+  `OPENCL_DEVICE=<platform>:<device>` (e.g. `OPENCL_DEVICE=1:0 python3 run_pybind.py ...`);
+  if no GPU is found, the error lists every OpenCL device with its index.
 
 Run the whole flow (read HDF5 -> search -> resample -> write HDF5):
 
@@ -298,7 +326,8 @@ Search only:
 python3 run_pybind.py --data ../data/proj_shepplogan128.hdf5 --skip-resample
 ```
 
-Every backend on both datasets, from the repo root:
+Every backend on both datasets, from the repo root (if you're still inside
+`projection-center-cpp/` from the commands above, `cd ..` first):
 
 ```bash
 # 128px dataset
@@ -510,9 +539,10 @@ the Python package.
 
 ### Linux
 
-Install your vendor OpenCL loader, the OpenCL C++ header and the runtime
-first (e.g. Ubuntu/Debian: `ocl-icd-opencl-dev`, `opencl-clhpp-headers`, plus
-the vendor runtime package, `intel-opencl-icd` for Intel iGPUs). Then:
+Install your vendor OpenCL loader and runtime first (e.g. Ubuntu/Debian:
+`ocl-icd-opencl-dev` plus the vendor runtime package, `intel-opencl-icd` for
+Intel iGPUs). The OpenCL headers are bundled in
+`projection-center-cpp/third_party/opencl/`. Then:
 
 ```bash
 # C++ side

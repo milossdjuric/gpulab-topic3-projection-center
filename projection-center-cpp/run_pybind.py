@@ -24,7 +24,7 @@ import os
 import sys
 
 import h5py
-from backend import _backend
+from backend import _backend, private_tmp_dir
 
 _IMPORT_MS = (time.perf_counter() - _T_START) * 1000
 
@@ -47,6 +47,23 @@ def _timing_line(read_ms, compute_ms, write_ms):
             f" | compute+I/O {read_ms + compute_ms + write_ms:.0f} ms")
 
 
+def _writable_output(path):
+    """Returns path if the file can be written there (creating its folder if
+    needed), otherwise the same file name in a private folder under the
+    system temp dir. Checked before any work starts, so a read-only project folder
+    doesn't crash the run after the search has already taken its time."""
+    target = path if os.path.exists(path) else os.path.dirname(os.path.abspath(path))
+    while not os.path.exists(target):
+        target = os.path.dirname(target)
+    if os.access(target, os.W_OK):
+        return path
+    # A per-user folder only this user can write (see private_tmp_dir()),
+    # not a shared name another user could have prepared.
+    fallback = os.path.join(private_tmp_dir("projection_center_runs"), os.path.basename(path))
+    print(f"{path}: location is not writable, writing to {fallback} instead")
+    return fallback
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", required=True, help="Path to input HDF5")
@@ -66,6 +83,10 @@ def main():
     args = ap.parse_args()
 
     print(f"import (torch + pybind module load): {_IMPORT_MS:.0f} ms")
+
+    args.output = _writable_output(args.output)
+    if not args.skip_resample:
+        args.resample_output = _writable_output(args.resample_output)
 
     t0 = time.perf_counter()
     with h5py.File(args.data, "r") as f:

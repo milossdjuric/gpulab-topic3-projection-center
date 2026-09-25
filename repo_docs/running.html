@@ -178,7 +178,7 @@ pybind11 Python interface.</p>
 </div>
 <div class="card">
   <div class="t">Build the C++/OpenCL binaries (Linux only)</div>
-  <div class="d">Configures, then compiles, via meson and ninja. Needs (Ubuntu/Debian) <code>ocl-icd-opencl-dev opencl-clhpp-headers libhdf5-dev libboost-program-options-dev libboost-json-dev</code>.</div>
+  <div class="d">Configures, then compiles, via meson and ninja. Needs (Ubuntu/Debian) <code>ocl-icd-opencl-dev libhdf5-dev libboost-program-options-dev libboost-json-dev</code> (on Debian 12, which has no <code>libboost-json-dev</code>: <code>libboost-program-options1.81-dev libboost-json1.81-dev</code> instead). The OpenCL headers are bundled in <code>projection-center-cpp/third_party/opencl/</code>.</div>
   <pre>cd projection-center-cpp &amp;&amp; meson setup builddir &amp;&amp; meson compile -C builddir &amp;&amp; cd ..</pre>
 </div>
 <div class="card">
@@ -188,7 +188,7 @@ pybind11 Python interface.</p>
 </div>
 <div class="card pybind">
   <div class="head"><span class="t">Python interface (pybind11): check the requirements</span><span class="tag">pybind</span></div>
-  <div class="d">Needs <code>torch</code> (brings <code>torch.utils.cpp_extension</code> and the pybind11 headers), <code>numpy</code>, <code>h5py</code>, plus <code>g++</code> and <code>ninja</code>. OpenCL header + loader: <code>sudo apt install opencl-clhpp-headers ocl-icd-opencl-dev</code>. No build step: the first import compiles the module (~40 s) and caches it.</div>
+  <div class="d">Needs <code>torch</code> (brings <code>torch.utils.cpp_extension</code> and the pybind11 headers), <code>numpy</code>, <code>h5py</code>, plus <code>g++</code> and <code>ninja</code>. OpenCL loader: <code>sudo apt install ocl-icd-opencl-dev</code> (the headers are bundled). No build step: the first import compiles the module (~40 s) and caches it.</div>
   <pre>python3 -c "import torch, numpy, h5py" &amp;&amp; which g++ ninja</pre>
 </div>
 </section>

@@ -33,8 +33,9 @@ Running `python3 run_pybind.py ...` from the repo root fails with
 | What | Why | Check |
 |---|---|---|
 | Python 3.10+ with `torch`, `numpy`, `h5py` | `torch` provides `torch.utils.cpp_extension` **and** the pybind11 headers (no separate pybind11 install) | `python3 -c "import torch, numpy, h5py"` |
-| `g++` (C++17) and `ninja` | `torch.utils.cpp_extension` compiles the C++ with them | `which g++ ninja` |
-| OpenCL C++ header `CL/opencl.hpp` + ICD loader (`-lOpenCL`) and a GPU OpenCL driver. Ubuntu/Debian: `sudo apt install opencl-clhpp-headers ocl-icd-opencl-dev` + vendor driver (e.g. `intel-opencl-icd`) | the C++ code includes `CL/opencl.hpp`; the `cpp` and `opencl` backends run on the GPU | `ls /usr/include/CL/opencl.hpp` and `clinfo -l` |
+| `g++` (C++17) and `ninja` (`apt install ninja-build`, or `pip install ninja` into the Python you run with; a venv's ninja is found even without activating the venv) | `torch.utils.cpp_extension` compiles the C++ with them | `which g++ ninja` |
+| Python development headers (`python3-dev`, or `python3.11-dev` to match your Python) | the module includes `Python.h`; without it the build stops with `fatal error: Python.h: No such file or directory` | `python3 -c "import sysconfig,os; print(os.path.exists(sysconfig.get_paths()['include']+'/Python.h'))"` |
+| OpenCL ICD loader (`-lOpenCL`) and a GPU OpenCL driver (OpenCL 2.0 or newer, which every current NVIDIA/Intel/AMD driver provides). Ubuntu/Debian: `sudo apt install ocl-icd-opencl-dev` + vendor driver (e.g. `intel-opencl-icd`) | the `cpp` and `opencl` backends run on the GPU. The OpenCL headers are bundled in `third_party/opencl/`, so no header package is needed | `clinfo -l` |
 
 A CPU-only PyTorch build is enough. The warning
 `No CUDA runtime is found, using CUDA_HOME=...` is harmless: this project uses
@@ -42,7 +43,9 @@ OpenCL, not CUDA.
 
 No build step is needed. The first `from backend import _backend` compiles the
 module (about 40 s on the dev machine) and caches it in `~/.cache/torch_extensions/`;
-after that it loads in well under a second.
+after that it loads in well under a second. If that cache folder isn't
+writable, the module is built in a private folder under `/tmp` instead (the import
+prints which); `TORCH_EXTENSIONS_DIR=/some/folder` chooses it explicitly.
 
 ---
 
@@ -278,7 +281,15 @@ computation, and is listed separately as the `import` stage.
 | Changed a `.cpp`/`.hpp` file but nothing changes | `load()` rebuilds changed sources automatically; if it doesn't, clear the cache: `rm -rf ~/.cache/torch_extensions/*/forward_search_backend` |
 | Changed a `.cl` kernel | nothing to rebuild; kernels are compiled at run time from `kernels/` |
 | `mode="image"` crashes | known Intel iGPU driver bug on the dev machine; use `mode="buffer"` (the default) |
-| `No GPU device found` | no OpenCL GPU driver visible (`clinfo -l`); `backend="cpu"` still works |
+| `No OpenCL platform found: no GPU OpenCL driver (ICD) is installed` or `No GPU device found` | no OpenCL GPU driver visible (`clinfo -l`); the message lists every OpenCL device found. Pick one explicitly with `OPENCL_DEVICE=<platform>:<device>`, or use `backend="cpu"` |
+| Several GPUs, and the wrong one is used | the first GPU of the first OpenCL platform is used by default (`Device:` line shows which); choose with `OPENCL_DEVICE=<platform>:<device>`, e.g. `OPENCL_DEVICE=1:0` |
+| `RuntimeError: OpenCL error: clXxx failed: CL_... (-N)` | an OpenCL call failed on the device; the name and number say why (e.g. `CL_OUT_OF_RESOURCES (-5)`, `CL_INVALID_WORK_GROUP_SIZE (-54)`). Please include this line when reporting a problem |
+| `Ninja is required to load C++ extensions` | `pip install ninja` into the Python you run with, or `apt install ninja-build` |
+| `... location is not writable, writing to /tmp/projection_center_runs_<uid>/... instead` | the output folder is read-only (e.g. a submission folder); the results are in the folder named, which only you can write to. Choose one with `--output` / `--resample-output` |
+| `ValueError: ... steps must be > 0` | a search step of 0 (or a negative range) was passed |
+| Build error in `/usr/include/CL/opencl.hpp` (e.g. `'getContextPlatformVersion' is not a member of 'cl::detail'`) | fixed: the project now compiles against its bundled headers in `third_party/opencl/`, never the system's. Seeing it means an old copy of the project is being built |
+| `cannot find -lOpenCL` | fixed: `backend.py` finds the OpenCL library itself (dev symlink `libOpenCL.so`, runtime `libOpenCL.so.1`, or CUDA's `lib64`). If it's somewhere unusual: `OPENCL_LIBRARY=/path/to/libOpenCL.so.1 python3 run_pybind.py ...` |
+| A build error persists after updating the project, or the import hangs (with no output, or on "waiting for lock") | an older or killed build is cached (a hard-killed build can leave a `lock` file behind): `rm -rf ~/.cache/torch_extensions/*/forward_search_backend` and run again |
 
 ---
 

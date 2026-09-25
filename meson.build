@@ -20,14 +20,24 @@ if not boost_json_lib.found()
 endif
 boost_json = declare_dependency(dependencies: boost_json_lib)
 
+# The OpenCL headers (CL/opencl.hpp + the C headers it needs) are bundled
+# in projection-center-cpp/third_party/opencl/ at one fixed Khronos release, so the build never depends
+# on which version, if any, the machine has installed. Older system copies
+# of opencl.hpp (e.g. Debian 12's) fail to compile with this project's
+# settings. Only the OpenCL library itself (libOpenCL) comes from the system.
+opencl_headers = include_directories('projection-center-cpp/third_party/opencl')
+
 executable('forward_search',
   ['projection-center-cpp/src/main.cpp', 'projection-center-cpp/src/forward_search.cpp'],
+  include_directories: opencl_headers,
   dependencies: [opencl, hdf5, boost])
 
 executable('forward_search_resample',
   ['projection-center-cpp/src/resample_main.cpp', 'projection-center-cpp/src/resample.cpp'],
+  include_directories: opencl_headers,
   dependencies: [opencl, hdf5, boost, boost_json])
 
 executable('projection_center_pipeline_cpp',
   ['projection-center-cpp/src/pipeline_main.cpp', 'projection-center-cpp/src/forward_search.cpp', 'projection-center-cpp/src/resample.cpp'],
+  include_directories: opencl_headers,
   dependencies: [opencl, hdf5, boost])

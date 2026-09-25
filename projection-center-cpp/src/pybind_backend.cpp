@@ -14,6 +14,7 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/numpy.h>
 #include "forward_search.hpp"
+#include "opencl_utils.hpp"  // cl::Error and clErrorName(), for the exception translator
 #include "ported_backends.hpp"
 #include "resample.hpp"
 #include <cmath>
@@ -22,9 +23,20 @@
 
 namespace py = pybind11;
 
-#ifndef KERNEL_DIR
-#error "KERNEL_DIR must be defined by the build (set in backend.py via extra_cflags)"
-#endif
+// Folder holding the .cl kernel files. backend.py sets it right after
+// loading this module (_set_kernel_dir), instead of compiling the path in:
+// a path baked into the build flags breaks the build when it contains a
+// space, since the compiler command is split at spaces.
+static std::string g_kernel_dir;
+
+static void setKernelDir(std::string dir) { g_kernel_dir = std::move(dir); }
+
+static std::string kernelPath(const char* file) {
+    if (g_kernel_dir.empty())
+        throw std::runtime_error("kernel folder not set: import the module through backend.py "
+                                 "(from backend import _backend)");
+    return g_kernel_dir + "/" + file;
+}
 
 using FloatArray = py::array_t<float, py::array::c_style | py::array::forcecast>;
 
@@ -61,6 +73,20 @@ static py::dict search(
     std::string mode, std::string backend
 ) {
     checkBackend(backend);
+    // A step of 0 or inf would make the candidate grid endless (a hang,
+    // then out of memory); a negative or NaN range gives an empty grid.
+    auto positive    = [](double v) { return std::isfinite(v) && v > 0; };
+    auto nonnegative = [](double v) { return std::isfinite(v) && v >= 0; };
+    if (!(positive(xshift_step) && positive(alpha_step) && positive(beta_step)))
+        throw std::invalid_argument("xshift_step, alpha_step and beta_step must be finite and > 0");
+    if (!(nonnegative(xshift) && nonnegative(alpha) && nonnegative(beta)))
+        throw std::invalid_argument("xshift, alpha and beta ranges must be finite and >= 0");
+    // Candidates per parameter, as the grid builders count them; keeps the
+    // total inside what the kernels' int indexes and memory can hold.
+    double grid = (2 * xshift / xshift_step + 1) * (2 * alpha / alpha_step + 1) * (2 * beta / beta_step + 1);
+    if (grid > 1e8)
+        throw std::invalid_argument("search grid too large (" + std::to_string(static_cast<long long>(grid))
+                                    + " candidates, limit 1e8): use a smaller range or a larger step");
     CbPara para = makePara(projections, SDD, SOD, pixel_size);
     if (para.detector_height != detector_height || para.detector_width != detector_width)
         throw std::runtime_error("projections shape does not match detector_height/detector_width");
@@ -79,10 +105,9 @@ static py::dict search(
             args.xshift_step = xshift_step / 1000.0;
             args.alpha_step  = alpha_step  / 180.0 * PI;
             args.beta_step   = beta_step   / 180.0 * PI;
-            // No explicit cl::Error translator needed: cl2.hpp/opencl.hpp's cl::Error
-            // derives from std::exception here, so pybind11's default translation
-            // already surfaces OpenCL failures as Python exceptions with what()'s text.
-            pose = computeCOR(para, projs, args, std::string(KERNEL_DIR) + "/forward_search.cl", mode);
+            // OpenCL failures (cl::Error) reach Python as a RuntimeError with the
+            // error code, via the translator registered in PYBIND11_MODULE below.
+            pose = computeCOR(para, projs, args, kernelPath("forward_search.cl"), mode);
         } else {
             PortSearchConfig config{};
             config.xshift_range_mm = xshift;
@@ -92,7 +117,7 @@ static py::dict search(
             config.alpha_step_deg  = alpha_step;
             config.beta_step_deg   = beta_step;
             pose = backend == "opencl"
-                ? searchPortedOpenCL(para, projs, config, std::string(KERNEL_DIR) + "/python_opencl_port.cl")
+                ? searchPortedOpenCL(para, projs, config, kernelPath("python_opencl_port.cl"))
                 : searchPortedCPU(para, projs, config);
         }
     }
@@ -152,10 +177,10 @@ static py::dict resample(
         py::gil_scoped_release release;
         if (backend == "cpp")
             computeResampleInto(para, projs, rpose, downsample,
-                                std::string(KERNEL_DIR) + "/resample.cl", batch_size, out);
+                                kernelPath("resample.cl"), batch_size, out);
         else if (backend == "opencl")
             resamplePortedOpenCL(para, projs, port_geo, batch_size,
-                                 std::string(KERNEL_DIR) + "/python_opencl_port.cl", out);
+                                 kernelPath("python_opencl_port.cl"), out);
         else
             resamplePortedCPU(para, projs, port_geo, out);
     }
@@ -175,6 +200,21 @@ static py::dict resample(
 // other package.
 PYBIND11_MODULE(forward_search_backend, m) {
     m.doc() = "Cone-beam CT forward search + resample backend (cpp / opencl / cpu)";
+    // cl::Error's what() is only the name of the OpenCL call that failed
+    // ("clEnqueueNDRangeKernel"). Add the error code and its name, so a
+    // failure on another machine says why, e.g. "... failed:
+    // CL_OUT_OF_RESOURCES (-5)".
+    py::register_exception_translator([](std::exception_ptr p) {
+        try {
+            if (p) std::rethrow_exception(p);
+        } catch (const cl::Error& e) {
+            PyErr_SetString(PyExc_RuntimeError,
+                            ("OpenCL error: " + std::string(e.what()) + " failed: " + clErrorName(e.err())
+                             + " (" + std::to_string(e.err()) + ")").c_str());
+        }
+    });
+    m.def("_set_kernel_dir", &setKernelDir, py::arg("path"),
+          "Internal: set the folder holding the .cl kernel files (done by backend.py)");
     m.def("search", &search,
           py::arg("projections"),
           py::arg("SDD"), py::arg("SOD"), py::arg("pixel_size"),
